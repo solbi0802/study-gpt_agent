@@ -350,3 +350,8 @@ There are many things, but if I were to say the characteristics of this lecture,
 - 위스퍼 모델을 내려받아 로컬에서 사용하기
     - 필요한 패키지 설치 : [whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo), [FFMPEG](https://www.gyan.dev/ffmpeg/builds/), [파이토치](https://pytorch.org/)
     - window에서 실행 시 제대로 실행 안됨!
+
+
+
+### 6장 GPT-4o를 이용한 AI 이미지 분석가
+
