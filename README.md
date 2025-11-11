@@ -1225,7 +1225,11 @@ with open('../data/images/image_quiz_eng.json', 'r', encoding='utf-8') as f:
 eng_dict
 
 ```
-
 mp3 파일 재생
 
 ipd.Audio(f"../data/audio/1.mp3")
+
+### 7장 최신 주식 정보를 알려 주는 AI 투자자 
+07-1 펑션 콜링의 기초
+07-2 GPT와 미국 주식 이야기하기
+07-3 스트림 출력하기
