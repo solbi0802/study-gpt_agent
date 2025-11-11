@@ -351,7 +351,936 @@ There are many things, but if I were to say the characteristics of this lecture,
     - 필요한 패키지 설치 : [whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo), [FFMPEG](https://www.gyan.dev/ffmpeg/builds/), [파이토치](https://pytorch.org/)
     - window에서 실행 시 제대로 실행 안됨!
 
+05-3 문장과 화자 구분하기
 
+- 화자 분리 모델로 시간대별 화자 구분하기 
+payannote.audio 이용해서 개발
+
+```
+%pip install pyannote.audio
+%pip install numpy==1.26
+```
+
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+HUGGING_FACE_TOKEN = os.getenv("HUGGING_FACE_TOKEN")
+```
+
+```python
+# instantiate the pipeline
+from pyannote.audio import Pipeline
+
+pipeline = Pipeline.from_pretrained(
+  "pyannote/speaker-diarization-3.1",
+  use_auth_token=HUGGING_FACE_TOKEN
+)
+```
+
+```python
+import torch
+
+# cuda가 사용 가능한 경우 cuda를 사용하도록 설정
+if torch.cuda.is_available():
+    pipeline.to(torch.device("cuda"))
+    print('cuda is available')
+else:
+    print('cuda is not available')
+```
+
+```python
+# run the pipeline on an audio file
+# diarization = pipeline("audio.wav")
+diarization = pipeline("../audio/싼기타_비싼기타.mp3")
+
+# dump the diarization output to disk using RTTM format
+with open("싼기타_비싼기타.rttm", "w", encoding='utf-8') as rttm:
+    diarization.write_rttm(rttm)
+
+```
+
+05-4 회의록을 정리하는 AI 서기 완성하기
 
 ### 6장 GPT-4o를 이용한 AI 이미지 분석가
+06-1 GPT 비전에게 이미지 설명 요청하기
 
+- [실습] 인터넷에 있는 이미지 설명 요청하기
+
+```python
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")  # 환경 변수에서 API 키를 가져오기
+
+client = OpenAI(api_key=api_key)  # 오픈AI 클라이언트의 인스턴스 생성
+
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "이 이미지에 대해 설명해주세요."},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "https://kfcapi.inicis.com/kfcs_api_img/KFCS/goods/DL_2176697_20241015131926683.png",
+                },
+            },
+        ],
+    }
+]
+
+response = client.chat.completions.create(
+    model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+    messages=messages # 대화 기록을 입력으로 전달
+)
+
+response
+```
+
+ChatCompletion(id='chatcmpl-CZuictHixM3G9w1xbIbDbivBFmQIf', choices=[Choice(finish_reason='stop', index=0, logprobs=None, message=ChatCompletionMessage(content='이 이미지는 KFC의 치킨을 담고 있는 버킷을 보여줍니다. 버킷에는 빨간색과 흰색의 줄무늬가 있으며, 가운데에는 KFC의 창립자의 얼굴 그림과 "KFC" 로고가 인쇄되어 있습니다. 치킨은 양념이 되어 있어 맛있어 보이는 외관을 가지고 있습니다.치킨 위에 촉촉한 양념이 덮여있는 모습입니다. 버킷에는 "it\'s finger lickin\' good"라는 문구도 포함되어 있습니다.', 
+
+- [실습] 내가 가진 이미지로 설명 요청하기
+
+```python
+// 이미지를 base54로 변환
+import base64
+
+# Function to encode the image
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
+    
+image_path = "../data/images/sajaboys.jpg"
+
+# 이미지를 base64로 인코딩
+base64_image = encode_image(image_path)
+
+print(base64_image)
+```
+
+```
+// base64로 변환한 이미지 설명 요청
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "이 이미지에 대해 설명해주세요."},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{base64_image}",
+                },
+            },
+        ],
+    }
+]
+
+response = client.chat.completions.create(
+    model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+    messages=messages # 대화 기록을 입력으로 전달
+)
+
+response.choices[0].message.content
+```
+
+```python
+// 여러 이미지 설명 요청
+
+seolleung_terrarosa_base64 = encode_image("../data/images/seolleung_terrarosa.jpg")
+local_stitch_terrarosa_base64 = encode_image("../data/images/local_stitch_terrarosa.jpg")
+
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "두 카페의 차이점을 설명해주세요."},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{seolleung_terrarosa_base64}",
+                },
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{local_stitch_terrarosa_base64}",
+                },
+            },
+        ],
+    }
+]
+
+response = client.chat.completions.create(
+    model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+    messages=messages # 대화 기록을 입력으로 전달
+)
+
+response.choices[0].message.content
+```
+
+- GPT 비전의 한계 알아보기 
+- 2021, 2022년 OECD 가입국의 연구 개발비 비교 그래프 분석 요청
+
+```
+oecd_rnd_2021_base64 = encode_image("../data/images/oecd_rnd_2021_large.png")
+oecd_rnd_2022_base64 = encode_image("../data/images/oecd_rnd_2022_large.png")
+
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "첫번째는 2021년 데이터이고, 두번째는 2022년 데이터입니다. 이 데이터에 대해 설명해주세요. 어떤 변화가 있었나요? 한국 중심으로 설명해주세요."},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{oecd_rnd_2021_base64}",
+                },
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{oecd_rnd_2022_base64}",
+                },
+            },
+        ],
+    }
+]
+
+response = client.chat.completions.create(
+    model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+    messages=messages # 대화 기록을 입력으로 전달
+)
+
+response.choices[0].message.content
+
+```
+
+```jsx
+'2021년과 2022년 데이터를 비교했을 때 한국의 연구개발비와 GDP 대비 연구개발비 비중 변화가 눈에 띕니다.\n\n1. **연구개발비**: \n   - 2021년: 89,282백만 달러\n   - 2022년: 91,013백만 달러 \n   - **증가**: 연구개발비가 약간 증가했습니다.\n\n2. **GDP 대비 연구개발비 비중**: \n   - 2021년에는 4.93%였던 비중이 2022년에는 5.21%로 증가했습니다. 이는 한국이 GDP 대비 연구개발 투자에 더욱 많은 비중을 두고 있음을 보여줍니다.\n\n이러한 변화는 한국이 연구개발 분야에 대한 투자를 지속적으로 확대하고 있다는 것을 나타내며, 기술 발전과 혁신을 통한 경제 성장에 집중하고 있음을 시사합니다.'
+```
+
+해상도가 조금 더 낮은 이미지 파일 사용
+
+```python
+oecd_rnd_2021_base64 = encode_image("../data/images/oecd_rnd_2021_medium.png")
+oecd_rnd_2022_base64 = encode_image("../data/images/oecd_rnd_2022.png")
+
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "첫번째는 2021년 데이터이고, 두번째는 2022년 데이터입니다. 이 데이터에 대해 설명해주세요. 어떤 변화가 있었나요? 한국 중심으로 설명해주세요."},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{oecd_rnd_2021_base64}",
+                },
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{oecd_rnd_2022_base64}",
+                },
+            },
+        ],
+    }
+]
+
+response = client.chat.completions.create(
+    model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+    messages=messages # 대화 기록을 입력으로 전달
+)
+
+response.choices[0].message.content
+
+```
+
+```jsx
+'두 이미지에서 2021년과 2022년의 주요 데이터를 비교하면서 한국 중심으로 설명드리겠습니다.\n\n1. **연구개발비 (R&D 지출)**:\n   - **2021년**: 한국의 연구개발비는 약 121,739백만 USD였습니다.\n   - **2022년**: 한국의 연구개발비는 약 133,867백만 USD로 증가했습니다.\n   - 이는 한국의 연구개발에 대한 투자 규모가 증가했음을 보여줍니다.\n\n2. **GDP 대비 연구개발비 비중**:\n   - **2021년**: 한국의 GDP 대비 연구개발비 비중은 4.93%였습니다.\n   - **2022년**: 한국의 GDP 대비 연구개발비 비중은 5.21%로 증가했습니다.\n   - 이는 경제 규모에 비해 연구개발 투자 비율이 높아졌다는 것을 나타냅니다.\n\n3. **주요 변화 사항**:\n   - 한국의 연구개발비와 비중 모두 증가하여, 경제 성장과 함께 기술 및 혁신에 대한 국가적 우선순위가 높아졌음을 알 수 있습니다.\n   - 세계적으로 미국과 중국도 연구개발비 지출이 증가하는 추세를 보였습니다.\n\n이런 변화는 한국이 기술 혁신과 과학 연구를 통해 미래 성장 동력을 확보하려는 노력을 반영한 것으로 볼 수 있습니다.'
+```
+
+- GPT의 이미지 인식 기능은 일반적인 이미지 분석엔 적절할 수 있으나 그래프를 해석하거나 환자 CT사진에서 질병을 감지하는 등 고차원적인 목적에는 부적합
+- 동일 이미지인데도 이미지 크기에 따라 완전 잘못 답변함
+
+06-2 이미지를 활용해 퀴즈 만들기
+
+- [실습] 문제 생성 함수 만들기
+
+```python
+from glob import glob
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+import base64
+
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY") 
+client = OpenAI(api_key=api_key)
+
+# 이미지 파일을 base64로 인코딩하는 함수
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
+    
+
+def image_quiz(image_path):
+    base64_image = encode_image(image_path) # 이미지를 base64로 인코딩
+
+    quiz_prompt = """
+    제공된 이미지를 바탕으로, 다음과 같은 양식으로 퀴즈를 만들어주세요. 
+    정답은 1~4 중 하나만 해당하도록 출제하세요.
+    아래는 예시입니다. 
+    ----- 예시 -----
+
+    Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+    - (1) 베이커리에서 사람들이 빵을 사고 있는 모습이 담겨 있습니다.
+    - (2) 맨 앞에 서 있는 사람은 빨간색 셔츠를 입고 있습니다.
+    - (3) 기차를 타기 위해 줄을 서 있는 사람들이 있습니다.
+    - (4) 점원은 노란색 티셔츠를 입고 있습니다.
+        
+    정답: (4) 점원은 노란색 티셔츠가 아닌 파란색 티셔츠를 입고 있습니다.
+    (주의: 정답은 1~4 중 하나만 선택되도록 출제하세요.)
+    ======
+    """
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": quiz_prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64_image}",
+                    },
+                },
+            ],
+        }
+    ]
+
+    response = client.chat.completions.create(
+        model="gpt-4o",  # 응답 생성에 사용할 모델을 지정
+        messages=messages # 대화 기록을 입력으로 전달
+    )
+
+    return response.choices[0].message.content
+
+q = image_quiz("./chap06/data/images/busan_dive.jpg")
+print(q)
+```
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 많은 사람들이 테이블에 앉아 노트북을 사용하고 있습니다.
+- (2) 천장에 여러 개의 조명이 설치되어 있습니다.
+- (3) 이미지 속에는 "DIVE 2024 IN BUSAN"이라는 문구가 보입니다.
+- (4) 사람들이 책을 읽고 있는 모습이 주로 담겨 있습니다.
+
+정답: (4) 사람들이 주로 노트북을 사용하고 있는 모습이 담겨 있습니다.
+
+- 여러 이미지로 문제집 만들기
+
+```
+from glob import glob
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+import base64
+
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY") 
+client = OpenAI(api_key=api_key)
+
+# 이미지 파일을 base64로 인코딩하는 함수
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
+    
+
+def image_quiz(image_path):
+    base64_image = encode_image(image_path) # 이미지를 base64로 인코딩
+
+    quiz_prompt = """
+    제공된 이미지를 바탕으로, 다음과 같은 양식으로 퀴즈를 만들어주세요. 
+    정답은 1~4 중 하나만 해당하도록 출제하세요.
+    아래는 예시입니다. 
+    ----- 예시 -----
+
+    Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+    - (1) 베이커리에서 사람들이 빵을 사고 있는 모습이 담겨 있습니다.
+    - (2) 맨 앞에 서 있는 사람은 빨간색 셔츠를 입고 있습니다.
+    - (3) 기차를 타기 위해 줄을 서 있는 사람들이 있습니다.
+    - (4) 점원은 노란색 티셔츠를 입고 있습니다.
+        
+    정답: (4) 점원은 노란색 티셔츠가 아닌 파란색 티셔츠를 입고 있습니다.
+    (주의: 정답은 1~4 중 하나만 선택되도록 출제하세요.)
+    ======
+    """
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": quiz_prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64_image}",
+                    },
+                },
+            ],
+        }
+    ]
+
+    response = client.chat.completions.create(
+        model="gpt-4o",  # 응답 생성에 사용할 모델을 지정
+        messages=messages # 대화 기록을 입력으로 전달
+    )
+
+    return response.choices[0].message.content
+
+# 이미지 경로를 받아 퀴즈를 만드는 함수
+q = image_quiz("./chap06/data/images/busan_dive.jpg")
+print(q)
+
+txt = '' # ①  문제들을 계속 붙여 나가기 위해 빈 문자열 선언
+no = 1 # 문제 번호를 위해 선언
+for g in glob('./chap06/data/images/*.jpg'):  # ②
+    try:
+        q = image_quiz(g) # 문제 출제 (가끔 GPT에서 에러 발생할 수 있으므로 try문 사용)
+    except Exception as e:
+        print(e)
+        continue
+
+    divider = f'## 문제 {no}\n\n'
+    print(divider)
+    
+    txt += divider  # ③
+    # 파일명 추출해 이미지 링크 만들기
+    filename = os.path.basename(g) # ③ 마크다운에 표시할 이미지 파일 경로 설정   
+    txt += f'![image]({filename})\n\n' # ③
+
+    # 문제 추가
+    print(q)
+    txt += q + '\n\n---------------------\n\n'
+    # ④ 마크다운 파일로 저장
+    with open('./chap06/data/images/image_quiz.md', 'w', encoding='utf-8') as f:
+        f.write(txt)
+    
+    no += 1 # 문제 번호 증가
+
+```
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 많은 사람들이 책상에 앉아 컴퓨터 작업을 하고 있습니다.
+- (2) 천장에는 여러 개의 조명이 설치되어 있습니다.
+- (3) 배경에는 "DIVE 2024 IN BUSAN"이라는 글자가 보입니다.
+- (4) 모든 사람이 동일한 색의 옷을 입고 있습니다.
+
+정답: (4) 모든 사람이 동일한 색의 옷을 입고 있지 않습니다. 다양한 색의 옷을 입고 있습니다.
+
+## 문제 1
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 많은 사람들이 책상에 앉아 무언가를 작업하고 있습니다.
+- (2) 천장에 조명이 여러 개 설치되어 있습니다.
+- (3) 행사 이름이 "DIVE 2024 in BUSAN"이라고 적혀 있습니다.
+- (4) 사람들이 책을 읽고 있는 모습이 담겨 있습니다.
+
+정답: (4) 사람들이 책을 읽고 있는 모습이 아닌, 컴퓨터를 사용하고 있는 모습이 담겨 있습니다.
+
+## 문제 2
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 세 명의 캐릭터가 소파에 앉아 있습니다.
+- (2) 가운데 캐릭터는 짧은 머리를 하고 있습니다.
+- (3) 테이블 위에는 다양한 음식이 놓여 있습니다.
+- (4) 오른쪽 캐릭터는 노란색 셔츠를 입고 있습니다.
+
+정답: (4) 오른쪽 캐릭터는 노란색 셔츠가 아닌 다른 색의 의상을 입고 있습니다.
+
+## 문제 3
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 큰 노란색 조형물이 보입니다.
+- (2) 건물에 "Local Stitch"라는 글자가 쓰여 있습니다.
+- (3) 검은색 의자가 있습니다.
+- (4) 사람들이 벽에 서서 포즈를 취하고 있습니다.
+
+정답: (4) 사람들은 보이지 않습니다.
+
+## 문제 4
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 카페 내부에 여러 개의 테이블과 의자가 있습니다.
+- (2) 바리스타가 음료를 준비하고 있습니다.
+- (3) 바닥은 파란색과 빨간색 타일로 되어 있습니다.
+- (4) 카운터 뒤벽은 노란색입니다.
+
+정답: (3) 바닥은 파란색과 빨간색 타일이 아닌, 흰색과 빨간색 타일로 되어 있습니다.
+
+## 문제 5
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 건물 외관은 벽돌로 마감되어 있습니다.
+- (2) 1층 창문에는 "PERSONAL COFFEE"라는 문구가 보입니다.
+- (3) 건물 앞에 주황색 원뿔 모양의 장애물이 있습니다.
+- (4) 건물은 단층 구조로 되어 있습니다.
+
+정답: (4) 건물은 단층 구조가 아닌 여러 층으로 되어 있습니다.
+
+## 문제 6
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 여러 종류의 빵이 진열되어 있습니다.
+- (2) 진열대 위에는 가격표가 부착되어 있습니다.
+- (3) 베이커리 직원들은 모자를 쓰고 있습니다.
+- (4) 오른쪽에는 케이크가 진열되어 있습니다.
+
+정답: (4) 오른쪽에는 케이크가 아닌 빵이 진열되어 있습니다.
+
+## 문제 7
+
+I'm unable to create questions about the identities of people in the image, but I can assist with general descriptions. Here’s a quiz based on the image itself:
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 다섯 명의 사람들이 포즈를 취하고 있는 모습이 담겨 있습니다.
+- (2) 가운데 있는 사람은 흰 셔츠를 입고 있습니다.
+- (3) 사람들 모두 바지를 입고 있습니다.
+- (4) 모든 사람의 머리색이 자연 갈색입니다.
+
+정답: (4) 모든 사람의 머리색이 자연 갈색이 아니라 다양한 색상입니다.
+
+## 문제 8
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) "bakery cafe pomme verte"라는 간판이 보입니다.
+- (2) 작업자들이 공사를 하고 있는 장면입니다.
+- (3) 오른쪽 상점의 이름은 "뉴트리코어"입니다.
+- (4) 이미지에는 사람들이 도로를 건너가고 있는 모습이 나옵니다.
+
+정답: (4) 이미지에는 사람들이 도로를 건너가고 있는 모습이 나오지 않습니다.
+
+## 문제 9
+
+---
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 여러 사람들이 테이블에 앉아 대화를 나누고 있습니다.
+- (2) 천장에 많은 조명이 설치되어 있습니다.
+- (3) 바닥은 짙은 색의 카펫으로 덮여 있습니다.
+- (4) 창문으로 바깥의 풍경이 보입니다.
+
+정답: (3) 바닥은 짙은 색의 카펫이 아닌 나무 바닥입니다.
+
+---
+
+## 문제 10
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 많은 사람들이 버스 옆에 모여 있습니다.
+- (2) 창문에 'CAMERA'라는 글자가 보입니다.
+- (3) 나무들이 잎사귀를 풍성하게 가지고 있습니다.
+- (4) 한 사람이 전화 통화를 하고 있습니다.
+
+정답: (2) 창문에 'CAMERA'라는 글자가 아닌 'COFFEE & BAKERY'라는 글자가 보입니다.
+
+- 영어로 문제 출제하기
+
+```python
+
+from glob import glob 
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+import base64
+
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY") 
+client = OpenAI(api_key=api_key)  
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
+    
+
+def image_quiz(image_path, n_trial=0, max_trial=3): # 오픈AI API 호출에 실패할 경우를 대비해 재귀적으로 재시도
+    if n_trial >= max_trial: # 최대 시도 회수에 도달하면 포기
+        raise Exception("Failed to generate a quiz.")
+    
+    base64_image = encode_image(image_path) # 이미지를 base64로 인코딩
+
+    quiz_prompt = """
+    제공된 이미지를 바탕으로, 다음과 같은 양식으로 퀴즈를 만들어주세요. 
+    정답은 1~4 중 하나만 해당하도록 출제하세요.
+    토익 리스닝 문제 스타일로 문제를 만들어주세요.
+    아래는 예시입니다. 
+    ----- 예시 -----
+
+    Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+    - (1) 베이커리에서 사람들이 빵을 사고 있는 모습이 담겨 있습니다.
+    - (2) 맨 앞에 서 있는 사람은 빨간색 셔츠를 입고 있습니다.
+    - (3) 기차를 타기 위해 줄을 서 있는 사람들이 있습니다.
+    - (4) 점원은 노란색 티셔츠를 입고 있습니다.
+
+    Listening: Which of the following descriptions of the image is incorrect?
+    - (1) It shows people buying bread at a bakery.
+    - (2) The person standing at the front is wearing a red shirt.
+    - (3) There are people lining up to take a train.
+    - (4) The clerk is wearing a yellow T-shirt.
+        
+    정답: (4) 점원은 노란색 티셔츠가 아닌 파란색 티셔츠를 입고 있습니다.
+    (주의: 정답은 1~4 중 하나만 선택되도록 출제하세요.)
+    ======
+    """
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": quiz_prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64_image}",
+                    },
+                },
+            ],
+        }
+    ]
+
+    try: 
+        response = client.chat.completions.create(
+            model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+            messages=messages # 대화 기록을 입력으로 전달
+        )
+    except Exception as e:
+        print("failed\n" + e)
+        return image_quiz(image_path, n_trial+1)
+    
+    content = response.choices[0].message.content
+
+    if "Listening:" in content:
+        return content, True
+    else:
+        return image_quiz(image_path, n_trial+1)
+
+q = image_quiz("./chap06/data/images/busan_dive.jpg")
+print(q)
+
+txt = '' # ①  문제들을 계속 붙여 나가기 위해 빈 문자열 선언
+no = 1 # 문제 번호를 위해 선언
+for g in glob('./chap06/data/images/*.jpg'):  # ②
+    q, is_suceed = image_quiz(g)
+
+    if not is_suceed:
+        continue
+
+    divider = f'## 문제 {no}\n\n'
+    print(divider)
+    
+    txt += divider  # ③
+    # 파일명 추출해 이미지 링크 만들기
+    filename = os.path.basename(g) # ③ 마크다운에 표시할 이미지 파일 경로 설정   
+    txt += f'![image]({filename})\n\n' # ③
+
+    # 문제 추가
+    print(q)
+    txt += q + '\n\n---------------------\n\n'
+    # ④ 마크다운 파일로 저장
+    with open('./chap06/data/images/image_quiz_eng.md', 'w', encoding='utf-8') as f:
+        f.write(txt)
+    
+    no += 1 # 문제 번호 증가
+
+```
+
+```markdown
+## 문제 1
+
+![image](busan_dive.jpg)
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+
+- (1) 행사장 내부에 많은 사람들이 앉아 있습니다.
+- (2) 중앙에 있는 큰 스크린은 "DIVE 2024 IN BUSAN"을 보여주고 있습니다.
+- (3) 모든 참가자들이 노란색 티셔츠를 입고 있습니다.
+- (4) 행사장은 실내에 있습니다.
+
+Listening: Which of the following descriptions of the image is incorrect?
+
+- (1) Many people are seated inside the venue.
+- (2) The large screen in the center displays "DIVE 2024 IN BUSAN."
+- (3) All participants are wearing yellow T-shirts.
+- (4) The event is held indoors.
+
+정답: (3) 모든 참가자들이 노란색 티셔츠를 입고 있는 것은 아닙니다.
+
+---------------------
+
+## 문제 2
+
+![image](kdemon.jpg)
+
+Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+- (1) 세 명의 사람이 소파에 앉아 있습니다.
+- (2) 테이블 위에는 다양한 음식이 놓여 있습니다.
+- (3) 한 사람은 노란색 재킷을 입고 있습니다.
+- (4) 배경에 창문이 크게 보입니다.
+
+Listening: Which of the following descriptions of the image is incorrect?
+- (1) Three people are sitting on the couch.
+- (2) A variety of food is placed on the table.
+- (3) One person is wearing a yellow jacket.
+- (4) A large window is prominently seen in the background.
+
+정답: (4) 배경에 창문이 크게 보이지 않습니다.
+....
+```
+
+- [실습] TTS로 영어 듣기 평가 문제 만들기
+
+```python
+from glob import glob 
+import json
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+import base64
+
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY") 
+client = OpenAI(api_key=api_key)  
+
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
+    
+
+def image_quiz(image_path, n_trial=0, max_trial=3):
+    if n_trial >= max_trial: # 최대 시도 회수에 도달하면 포기
+        raise Exception("Failed to generate a quiz.")
+    
+    base64_image = encode_image(image_path) # 이미지를 base64로 인코딩
+
+    quiz_prompt = """
+    제공된 이미지를 바탕으로, 다음과 같은 양식으로 퀴즈를 만들어주세요. 
+    정답은 1~4 중 하나만 해당하도록 출제하세요.
+    토익 리스닝 문제 스타일로 문제를 만들어주세요.
+    아래는 예시입니다. 
+    ----- 예시 -----
+
+    Q: 다음 이미지에 대한 설명 중 옳지 않은 것은 무엇인가요?
+    - (1) 베이커리에서 사람들이 빵을 사고 있는 모습이 담겨 있습니다.
+    - (2) 맨 앞에 서 있는 사람은 빨간색 셔츠를 입고 있습니다.
+    - (3) 기차를 타기 위해 줄을 서 있는 사람들이 있습니다.
+    - (4) 점원은 노란색 티셔츠를 입고 있습니다.
+
+    Listening: Which of the following descriptions of the image is incorrect?
+    - (1) It shows people buying bread at a bakery.
+    - (2) The person standing at the front is wearing a red shirt.
+    - (3) There are people lining up to take a train.
+    - (4) The clerk is wearing a yellow T-shirt.
+        
+    정답: (4) 점원은 노란색 티셔츠가 아닌 파란색 티셔츠를 입고 있습니다.
+    (주의: 정답은 1~4 중 하나만 선택되도록 출제하세요.)
+    ======
+    """
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": quiz_prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64_image}",
+                    },
+                },
+            ],
+        }
+    ]
+
+    try: 
+        response = client.chat.completions.create(
+            model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+            messages=messages # 대화 기록을 입력으로 전달
+        )
+    except Exception as e:
+        print("failed\n" + e)
+        return image_quiz(image_path, n_trial+1)
+    
+    content = response.choices[0].message.content
+
+    if "Listening:" in content:
+        return content, True
+    else:
+        return image_quiz(image_path, n_trial+1)
+
+txt = '' # 문제들을 계속 붙여 나가기 위해 빈 문자열 선언
+eng_dict = []
+no = 1 # 문제 번호를 위해 선언
+for g in glob('./chap06/data/images/*.jpg'):  # ②
+    q, is_suceed = image_quiz(g)
+
+    if not is_suceed:
+        continue
+
+    divider = f'## 문제 {no}\n\n'
+    print(divider)
+    
+    txt += divider 
+    # 파일명 추출해 이미지 링크 만들기
+    filename = os.path.basename(g) # ③ 마크다운에 표시할 이미지 파일 경로 설정   
+    txt += f'![image]({filename})\n\n' 
+
+    # 문제 추가
+    print(q)
+    txt += q + '\n\n---------------------\n\n'
+    # ④ 마크다운 파일로 저장
+    with open('./chap06/data/images/image_quiz_eng.md', 'w', encoding='utf-8') as f:
+        f.write(txt)
+
+    # 영어 문제만 추출
+    eng = q.split('Listening: ')[1].split('정답:')[0].strip()    
+
+    eng_dict.append({
+        'no': no,
+        'eng': eng,
+        'img': filename
+    })
+
+    # json 파일로 저장
+    with open('./chap06/data/images/image_quiz_eng.json', 'w', encoding='utf-8') as f:
+        json.dump(eng_dict, f, ensure_ascii=False, indent=4)
+
+    no += 1 # 문제 번호 증가
+
+```
+
+json 파일
+
+```json
+[
+    {
+        "no": 1,
+        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) Many people are sitting at desks working.\n- (2) There is a large display board on the wall.\n- (3) The lights in the room are turned off.\n- (4) There are structures visible at the top of the image.",
+        "img": "busan_dive.jpg"
+    },
+    {
+        "no": 2,
+        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) Three people are sitting around a table.\n- (2) The person in the middle has purple hair.\n- (3) There are various foods on the table.\n- (4) The person on the left is wearing yellow clothes.",
+        "img": "kdemon.jpg"
+    },
+    {
+        "no": 3,
+        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) A yellow sculpture is located in the center.\n- (2) The background building has the word \"Local Stitch\" visible.\n- (3) A bench is located on the right side of the image.\n- (4) There is a space with trees planted in the image.",
+        "img": "local_stitch.jpg"
+    },
+    {
+        "no": 4,
+        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) People are sitting in the café.\n- (2) Large windows surround the café.\n- (3) One person is standing in front of the cashier.\n- (4) The café walls are yellow and white.",
+        "img": "local_stitch_terrarosa.jpg"
+    },
+    {
+        "no": 5,
+        "eng": "Which of the following descriptions of the image is incorrect?\n\n- (1) There is a coffee shop on the second floor.\n- (2) The building's exterior is made of red bricks.\n- (3) A no parking sign is visible.\n- (4) An orange cone is placed on the sidewalk.",
+        "img": "mangwon.jpg"
+    },
+    {
+        "no": 6,
+        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) Various types of bread are displayed.\n- (2) The staff member is wearing a hat.\n- (3) The price tags of the bread are not visible.\n- (4) A glass display case is used.",
+        "img": "mangwon_bakery.jpg"
+    }
+]
+```
+
+tts.ipynb
+오픈AI API 설정하기 
+
+```
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY") 
+client = OpenAI(api_key=api_key)  
+```
+
+오픈AI TTS 공식 문서(https://platform.openai.com/docs/guides/text-to-speech)
+
+첫번째 TTS 테스트
+
+```python
+response = client.audio.speech.create(
+    model="tts-1-hd",
+    voice="echo", // 책과 다른 목소리 선택
+    input="Hello world! This is a TTS test.",
+)
+
+response.write_to_file("hello_world.mp3")
+
+# 재생
+import IPython.display as ipd
+
+ipd.Audio("hello_world.mp3")
+```
+
+목소리 바꾸고 테스트
+
+```python
+# 다른 목소리
+voice = "ash"
+mp3_file = f"hello_world_{voice}.mp3"
+
+response = client.audio.speech.create(
+    model="tts-1-hd",
+    voice=voice,
+    input=f"Hello world! I'm {voice}. This is a TTS test.",
+)
+
+response.write_to_file(mp3_file)
+
+# 재생
+import IPython.display as ipd
+
+ipd.Audio(mp3_file)
+```
+
+영어 스크립트 json파일 읽기
+
+```python
+import json
+
+# json 파일 열기
+with open('../data/images/image_quiz_eng.json', 'r', encoding='utf-8') as f:
+    eng_dict = json.load(f)
+
+eng_dict
+
+```
+mp3 파일 재생
+
+ipd.Audio(f"../data/audio/1.mp3")
+
+### 7장 최신 주식 정보를 알려 주는 AI 투자자 
+07-1 펑션 콜링의 기초
+07-2 GPT와 미국 주식 이야기하기
+07-3 스트림 출력하기
