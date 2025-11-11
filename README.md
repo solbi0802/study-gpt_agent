@@ -1282,5 +1282,325 @@ ipd.Audio(f"../data/audio/1.mp3")
 
 ### 7장 최신 주식 정보를 알려 주는 AI 투자자 
 07-1 펑션 콜링의 기초
+- 펑션 콜링이란?
+LLM이 사용자의 자연어 요청을 이해하고, 이를 수행하기 위해 미리 정의된 외부 함수(API)를 자동으로 호출하는 기술, LLM은 단순한 정보 제공을 넘어 실제 작업을 수행하고 외부 시스템과 연동할 수 있게 된다.
+예를 들어, 사용자가 지금 몇시야? 물어보면 gpt는 도구 목록에서 시간을 확인할 수 있는 도구를 찾아서 그 도구를 사용 해서 답변함.
+도구 목록의 딕셔너리는 GPT모델이 어떤 도구를 사용할 수 있는 지 알려주는 설명서 역할을 하며, GPT  API를 호출할 때 이 도구 목록도 함께 전달됨
+어떤 걸 물어봤을 때 ‘분석중…’ 이렇게 뜨는 거면 펑션 콜링 기능을 사용해 질문에 답변하는 중임.
+    - [실습] 펑션 콜링 적용하기
+    
+    ```python
+    // GPT를 위해 사용할 함수 정의 및 설명 추가
+    from datetime import datetime
+    
+    def get_current_time():
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(now)
+        return now
+    
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_current_time",
+                "description": "현재 날짜와 시간을 반환합니다.", #매개변수가 없으므로 파라미터 생략
+            }
+        },
+    ]
+    
+    if __name__ == '__main__':
+        get_current_time()  
+        
+        # 2025-11-11 23:08:00
+    ```
+    
+    ```python
+    from gpt_functions import get_current_time, tools 
+    from openai import OpenAI
+    from dotenv import load_dotenv
+    import os
+    
+    load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY") 
+    
+    client = OpenAI(api_key=api_key)
+    
+    def get_ai_response(messages, tools=None):
+        response = client.chat.completions.create(
+            model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+            messages=messages,  # 대화 기록을 입력으로 전달
+            tools=tools,  # 사용 가능한 도구 목록 전달
+        )
+        return response  # 생성된 응답 내용 반환
+    
+    messages = [
+        {"role": "system", "content": "너는 사용자를 도와주는 상담사야."},  # 초기 시스템 메시지
+    ]
+    
+    while True:
+        user_input = input("사용자\t: ")  # 사용자 입력 받기
+    
+        if user_input == "exit":  # 사용자가 대화를 종료하려는지 확인
+            break
+        
+        messages.append({"role": "user", "content": user_input})  # 사용자 메시지 대화 기록에 추가
+        
+        ai_response = get_ai_response(messages, tools=tools)
+        ai_message = ai_response.choices[0].message
+        print(ai_message)  # gpt에서 반환되는 값을 파악하기 위해 임시로 추가
+    
+        tool_calls = ai_message.tool_calls  # AI 응답에 포함된 tool_calls를 가져옵니다.
+        if tool_calls:  # tool_calls가 있는 경우
+            tool_name = tool_calls[0].function.name # 실행해야한다고 판단한 함수명 받기
+            tool_call_id = tool_calls[0].id         # tool_call 아이디 받기    
+            
+            if tool_name == "get_current_time":  # 만약 tool_name이 "get_current_time"이라면
+                messages.append({
+                    "role": "function",  # role을 "function"으로 설정
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": get_current_time(),  # get_current_time 함수를 실행한 결과를 content로 설정
+                })
+    
+            ai_response = get_ai_response(messages, tools=tools) # 다시 GPT 응답 받기
+            ai_message = ai_response.choices[0].message
+    
+        messages.append(ai_message)  # AI 응답을 대화 기록에 추가하기
+    
+        print("AI\t: " + ai_message.content)  # AI 응답 출력
+    
+    ```
+    
+
+- [실습] 도시별 시간 알려 주기
+
+```
+// 타임존 정보를 이용해 현재 시간을 구할 수 있도록 수정
+from datetime import datetime
+import pytz 
+
+def get_current_time(timezone: str = 'Asia/Seoul'):
+    tz = pytz.timezone(timezone) # 타임존 설정
+    now = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+    now_timezone = f'{now} {timezone}'
+    print(now_timezone)
+    return now_timezone
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_time",
+            "description": "해당 타임존의 날짜와 시간을 반환합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    'timezone': {
+                        'type': 'string',
+                        'description': '현재 날짜와 시간을 반환할 타임존을 입력하세요. (예: Asia/Seoul)',
+                    },
+                },
+                "required": ['timezone'],
+            },        
+        }
+    },
+]
+
+if __name__ == '__main__':
+    get_current_time('America/New_York')
+```
+
+```python
+from gpt_functions import get_current_time, tools 
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+import json
+
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")  
+
+client = OpenAI(api_key=api_key)
+
+def get_ai_response(messages, tools=None):
+    response = client.chat.completions.create(
+        model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+        messages=messages,  # 대화 기록을 입력으로 전달
+        tools=tools,  # 사용 가능한 도구 목록 전달
+    )
+    return response  # 생성된 응답 내용 반환
+
+messages = [
+    {"role": "system", "content": "너는 사용자를 도와주는 상담사야."},  # 초기 시스템 메시지
+]
+
+while True:
+    user_input = input("사용자\t: ")  # 사용자 입력 받기
+
+    if user_input == "exit":  # 사용자가 대화를 종료하려는지 확인
+        break
+    
+    messages.append({"role": "user", "content": user_input})  # 사용자 메시지 대화 기록에 추가
+    
+    ai_response = get_ai_response(messages, tools=tools)
+    ai_message = ai_response.choices[0].message
+    print(ai_message)  # gpt에서 반환되는 값을 파악하기 위해 임시로 추가
+
+    tool_calls = ai_message.tool_calls  # AI 응답에 포함된 tool_calls를 가져옵니다.
+    if tool_calls:  # tool_calls가 있는 경우
+        tool_name = tool_calls[0].function.name # 실행해야한다고 판단한 함수명 받기
+        tool_call_id = tool_calls[0].id         # 함수 아이디 받기    
+        arguments = json.loads(tool_calls[0].function.arguments) # 문자열을 딕셔너리로 변환    
+        
+        if tool_name == "get_current_time":  #tool_name이 "get_current_time"이라면
+            messages.append({
+                "role": "function",  # role을 "function"으로 설정
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "content": get_current_time(timezone=arguments['timezone']),  # 타임존 추가
+            })
+
+        ai_response = get_ai_response(messages, tools=tools) # 다시 GPT 응답 받기
+        ai_message = ai_response.choices[0].message
+
+    messages.append(ai_message)  # AI 응답을 대화 기록에 추가하기
+
+    print("AI\t: " + ai_message.content)  # AI 응답 출력
+
+```
+
+    
+
+- [실습] 여러 도시의 시간을 한 번에 대답할 수 있게 하기
+    
+    ```python
+    from gpt_functions import get_current_time, tools 
+    from openai import OpenAI
+    from dotenv import load_dotenv
+    import os
+    import json
+    
+    load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY") 
+    
+    client = OpenAI(api_key=api_key) 
+    
+    def get_ai_response(messages, tools=None):
+        response = client.chat.completions.create(
+            model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+            messages=messages,  # 대화 기록을 입력으로 전달
+            tools=tools,  # 사용 가능한 도구 목록 전달
+        )
+        return response  # 생성된 응답 내용 반환
+    
+    messages = [
+        {"role": "system", "content": "너는 사용자를 도와주는 상담사야."},  # 초기 시스템 메시지
+    ]
+    
+    while True:
+        user_input = input("사용자\t: ")  # 사용자 입력 받기
+    
+        if user_input == "exit":  # 사용자가 대화를 종료하려는지 확인
+            break
+        
+        messages.append({"role": "user", "content": user_input})  # 사용자 메시지 대화 기록에 추가
+        
+        ai_response = get_ai_response(messages, tools=tools)
+        ai_message = ai_response.choices[0].message
+        print(ai_message)  # gpt에서 반환되는 값을 파악하기 위해 임시로 추가
+    
+        tool_calls = ai_message.tool_calls  # AI 응답에 포함된 tool_calls를 가져옵니다.
+        if tool_calls:  # tool_calls가 있는 경우
+            for tool_call in tool_calls: # 함수 결과 계속 추가
+                tool_name = tool_call.function.name # 실행해야한다고 판단한 함수명 받기
+                tool_call_id = tool_call.id         # tool_call 아이디 받기    
+                arguments = json.loads(tool_call.function.arguments) #문자열을 딕셔너리로 변환    
+                
+                if tool_name == "get_current_time":  # 만약 tool_name이 "get_current_time"이라면
+                    messages.append({
+                        "role": "function",  # role을 "function"으로 설정
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": get_current_time(timezone=arguments['timezone']),  # 타임존 추가
+                    })
+            messages.append({"role": "system", "content": "이제 주어진 결과를 바탕으로 답변할 차례다."})  # 함수 실행 완료 메시지 추가
+            ai_response = get_ai_response(messages, tools=tools) # 다시 GPT 응답 받기
+            ai_message = ai_response.choices[0].message
+    
+        messages.append(ai_message)  # AI 응답을 대화 기록에 추가하기
+    
+        print("AI\t: " + ai_message.content)  # AI 응답 출력
+    
+    ```
+    
+
+- [실습] 스트림릿에서 펑션 콜링 사용하기
+    
+    ```
+    from gpt_functions import get_current_time, tools 
+    from openai import OpenAI
+    from dotenv import load_dotenv
+    import os
+    import json
+    import streamlit as st
+    
+    load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY")  
+    
+    client = OpenAI(api_key=api_key)  
+    
+    def get_ai_response(messages, tools=None):
+        response = client.chat.completions.create(
+            model="gpt-4o",  
+            messages=messages,  
+            tools=tools,  
+        )
+        return response 
+    
+    st.title("💬 AI Chatbot")   
+    
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = [
+            {"role": "system", "content": "너는 사용자를 도와주는 상담사야."}
+        ] 
+    
+    for msg in st.session_state.messages:
+        if msg["role"] == "assistant" or msg["role"] == "user": # assistant 혹은 user 메시지인 경우만
+            st.chat_message(msg["role"]).write(msg["content"])
+    
+    if user_input := st.chat_input():    # 사용자 입력 받기
+        st.session_state.messages.append({"role": "user", "content": user_input})  # 사용자 메시지를 대화 기록에 추가
+        st.chat_message("user").write(user_input)  # 사용자 메시지를 브라우저에서도 출력
+        
+        ai_response = get_ai_response(st.session_state.messages, tools=tools)
+        ai_message = ai_response.choices[0].message
+        print(ai_message)  # gpt에서 반환되는 값을 파악하기 위해 임시로 추가
+    
+        tool_calls = ai_message.tool_calls  # AI 응답에 포함된 tool_calls를 가져옵니다.
+        if tool_calls:  # tool_calls가 있는 경우
+            for tool_call in tool_calls:
+                tool_name = tool_call.function.name # 실행해야한다고 판단한 함수명 받기
+                tool_call_id = tool_call.id         # tool_call 아이디 받기    
+                arguments = json.loads(tool_call.function.arguments) # (1) 문자열을 딕셔너리로 변환    
+                
+                if tool_name == "get_current_time":  # ⑤ 만약 tool_name이 "get_current_time"이라면
+                    st.session_state.messages.append({
+                        "role": "function",  # role을 "function"으로 설정
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": get_current_time(timezone=arguments['timezone']),  # 타임존 추가
+                    })
+            st.session_state.messages.append({"role": "system", "content": "이제 주어진 결과를 바탕으로 답변할 차례다."}) 
+            ai_response = get_ai_response(st.session_state.messages, tools=tools) # 다시 GPT 응답 받기
+            ai_message = ai_response.choices[0].message
+    
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": ai_message.content
+        })  # ③ AI 응답을 대화 기록에 추가합니다.
+    
+        print("AI\t: " + ai_message.content)  # AI 응답 출력
+        st.chat_message("assistant").write(ai_message.content)  # 브라우저에 메시지 출력
+    ```
 07-2 GPT와 미국 주식 이야기하기
 07-3 스트림 출력하기
