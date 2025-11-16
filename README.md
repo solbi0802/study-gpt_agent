@@ -2597,5 +2597,744 @@ msft.recommendations # 추천 정보 출력
     ```
     <img width="775" height="777" alt="스크린샷 2025-11-16 오후 5 57 37" src="https://github.com/user-attachments/assets/0cd430a5-b805-493c-8865-99aedc433e55" />
 
+    ### 8장 랭체인을 활용한 에이전트 개발
+
+08-1 랭체인으로 챗봇만들기
+
+- 랭체인이란?
+    - 언어 모델에 기반한 AI 애플리케이션을 쉽게 개발할 수 있도록 도와주는 프레임워크
+    - 기존에 원하는 기능을 구현하려면 모든 코드를 직접 작성해야하는 과정을 간소화 할 수 있게 도구와 모듈 제공
+    - 다른 언어 모델로 쉽게 교체 가능, 특정 모델에 종속되지 않고 다양한 모델의 장점을 활용한 애플리케이션 개발 가능
+- [실습] 랭체인과 오픈 AI의 GPT API 비교하기
+
+```
+from langchain_openai import ChatOpenAI
+model = ChatOpenAI(model= "gpt-4o-mini")
+```
+
+```python
+from langchain_core.messages import HumanMessage
+model.invoke([HumanMessage(content="안녕? 나는 비비야")])
+
+#AIMessage(content='안녕, 비비야! 어떻게 지내? 도움이 필요하면 언제든지 말해줘.', additional_kwargs={'refusal': None}, response_metadata={'token_usage': {'completion_tokens': 21, 'prompt_tokens': 14, 'total_tokens': 35, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'rejected_prediction_tokens': 0}, 'prompt_tokens_details': {'audio_tokens': 0, 'cached_tokens': 0}}, 'model_provider': 'openai', 'model_name': 'gpt-4o-mini-2024-07-18', 'system_fingerprint': 'fp_560af6e559', 'id': 'chatcmpl-CcT4zCW3zrlZO4KHmG0tVwS9WzEKO', 'service_tier': 'default', 'finish_reason': 'stop', 'logprobs': None}, id='lc_run--33ef68f0-80ea-4d82-9181-104e7b6db3cc-0', usage_metadata={'input_tokens': 14, 'output_tokens': 21, 'total_tokens': 35, 'input_token_details': {'audio': 0, 'cache_read': 0}, 'output_token_details': {'audio': 0, 'reasoning': 0}})
+```
+
+랭체인에서는 AIMessage(인공지능 답변, role: assistant), HumanMessage(role: user), SystemMessage(role: system)와 같이 다양한 메시지 타입 제공
+
+```python
+model.invoke([HumanMessage(content="내 이름이 뭐지?")])
+
+#AIMessage(content='죄송하지만, 당신의 이름을 알 수 있는 정보가 없어요. 혹시 알려주시면 좋겠습니다!', additional_kwargs={'refusal': None}, response_metadata={'token_usage': {'completion_tokens': 24, 'prompt_tokens': 13, 'total_tokens': 37, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'rejected_prediction_tokens': 0}, 'prompt_tokens_details': {'audio_tokens': 0, 'cached_tokens': 0}}, 'model_provider': 'openai', 'model_name': 'gpt-4o-mini-2024-07-18', 'system_fingerprint': 'fp_560af6e559', 'id': 'chatcmpl-CcT63FbEK6xIFlSDk2xezW9pQJfNB', 'service_tier': 'default', 'finish_reason': 'stop', 'logprobs': None}, id='lc_run--0bd777a7-67ca-45cf-be48-2e68bf1e9a64-0', usage_metadata={'input_tokens': 13, 'output_tokens': 24, 'total_tokens': 37, 'input_token_details': {'audio': 0, 'cache_read': 0}, 'output_token_details': {'audio': 0, 'reasoning': 0}})
+```
+
+- [실습] 랭체인으로 멀티턴 대화하기
     
+    ```
+    # from openai import OpenAI  # 주석처리
+    from dotenv import load_dotenv
+    # import os
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+    
+    load_dotenv()
+    # api_key = os.getenv("OPENAI_API_KEY")  # 환경 변수에서 API 키 가져오기
+    # client = OpenAI(api_key=api_key)  # 오픈AI 클라이언트의 인스턴스 생성
+    
+    llm = ChatOpenAI(model="gpt-4o")  # ChatOpenAI 클래스의 인스턴스 생성
+    
+    # def get_ai_response(messages):
+    #     response = client.chat.completions.create(
+    #         model="gpt-4o",  # 응답 생성에 사용할 모델 지정
+    #         temperature=0.9,  # 응답 생성에 사용할 temperature 설정
+    #         messages=messages,  # 대화 기록을 입력으로 전달
+    #     )
+    #     return response.choices[0].message.content  # 생성된 응답의 내용 반환
+    
+    messages = [
+        # {"role": "system", "content": "너는 사용자를 도와주는 상담사야."},  # 초기 시스템 메시지
+        SystemMessage("너는 사용자를 도와주는 상담사야."),  # 초기 시스템 메시지
+    ]
+    
+    while True:
+        user_input = input("사용자: ")  # 사용자 입력 받기
+    
+        if user_input == "exit":  # 사용자가 대화를 종료하려는지 확인인
+            break
+        
+        messages.append(
+            # {"role": "user", "content": user_input} # 주석처리
+            HumanMessage(user_input)
+        )  # 사용자 메시지를 대화 기록에 추가 
+        
+        # ai_response = get_ai_response(messages)  # 주석처리
+        ai_response = llm.invoke(messages)  # 대화 기록을 기반으로 AI 응답 가져오기
+        messages.append(
+            # {"role": "assistant", "content": ai_response} # 주석처리
+            ai_response
+        )  # AI 응답 대화 기록에 추가하기
+    
+        print("AI: " + ai_response.content)  # AI 응답 출력
+    
+    ```
+    
+    ```python
+    사용자:  안녕 난 비비야
+    AI: 안녕 비비! 만나서 반가워. 어떻게 도와줄까?
+    사용자: 나에 대해 알고  있는 걸 말해줘
+    AI: 비비에 대해 내가 알고 있는 건 별로 없네. 만약 더 알고 싶다면 정보를 좀 더 공유해줄래? 그러면 더 자세히 이야기 나눌 수 있을 것 같아!
+    ```
+    
+    랭체인의 메시지 히스토리
+    
+    ```python
+    from langchain_core.chat_history import InMemoryChatMessageHistory  # 메모리에 대화 기록을 저장하는 클래스
+    from langchain_core.runnables.history import RunnableWithMessageHistory  # 메시지 기록을 활용해 실행 가능한 래퍼wrapper 클래스
+    from langchain_openai import ChatOpenAI  # 오픈AI 모델을 사용하는 랭체인 챗봇 클래스
+    from langchain_core.messages import HumanMessage
+    
+    model = ChatOpenAI(model="gpt-4o-mini")
+    
+    # 세션별 대화 기록을 저장할 딕셔너리
+    store = {}
+    
+    # 세션 ID에 따라 대화 기록을 가져오는 함수
+    def get_session_history(session_id: str):
+        # 만약 해당 세션 ID가 store에 없으면, 새로 생성해 추가함
+        if session_id not in store:
+            store[session_id] = InMemoryChatMessageHistory()  # 메모리에 대화 기록을 저장하는 객체 생성
+        return store[session_id]  # 해당 세션의 대화 기록을 반환
+    
+    # 모델 실행 시 대화 기록을 함께 전달하는 래퍼 객체 생성
+    with_message_history = RunnableWithMessageHistory(model, get_session_history)
+    ```
+    
+    ```python
+    config = {"configurable": {"session_id": "abc2"}}  # 세션 ID를 설정하는 config 객체 생성
+    
+    response = with_message_history.invoke(
+        [HumanMessage(content="안녕? 난 비비야.")],
+        config=config,
+    )
+    
+    print(response.content)
+    
+    # 안녕, 비비야! 만나서 반가워. 어떻게 지내?
+    ```
+    
+    ```python
+    response = with_message_history.invoke(
+        [HumanMessage(content="내 이름이 뭐지?")],
+        config=config,
+    )
+    
+    print(response.content)
+    
+    # 너의 이름은 비비야야! 맞지?
+    ```
+    
+    세션 id 변경하면 이전 대화 기억 못함
+    
+    ```python
+    config = {"configurable": {"session_id": "abc3"}}
+    
+    response = with_message_history.invoke(
+        [HumanMessage(content="내 이름이 뭐지?")],
+        config=config,
+    )
+    
+    response.content
+    
+    # '죄송하지만, 당신의 이름을 알 수 있는 방법이 없습니다. 이름이 궁금하시다면 직접 말씀해주시면 좋겠어요!'
+    ```
+    
+    ```python
+    config = {"configurable": {"session_id": "abc2"}}
+    
+    response = with_message_history.invoke(
+        [HumanMessage(content="아까 우리가 무슨 얘기 했지?")],
+        config=config,
+    )
+    
+    response.content
+    
+    # '우리는 너의 이름이 비비야라는 걸 확인했어. 그리고 네가 어떻게 지내는지도 물어봤었지. 다른 이야기를 나누고 싶으면 말해줘!'
+    ```
+    
+    스트림 방식으로 출력하기
+    
+    ```python
+    config = {"configurable": {"session_id": "abc2"}}
+    for r in with_message_history.stream(
+        [HumanMessage(content = "내가 어느 나라 사람인지 맞춰보고, 그 나라의 국가를 불러줘.")],
+        config=config,
+    ):
+        print(r.content, end="|")
+        
+      #|너|의| 이름|이| 비|비|야|인| 것으로| 미|루|어| 보|아|,| 인|도| 출|신|일| 수도| 있을| 것| 같|아|.| 맞|다면|,| 인|도의| 국가|인| "|J|ana| G|ana| Mana|"|를| 들|려|줄| 수| 있어|.| 곡|의| 시작| 부분|은| 다음|과| 같|아|:
+    
+    #|**|J|ana| gana| mana| ad|hin|ay|aka| j|aya| he|,|  
+    #|B|har|at| bh|ag|ya| v|idh|ata|...|**
+    
+    #|인|도|는| 다양한| 문화|,| 언|어|,| 종|교|가| 공|존|하는| 나라|로|,| 각| 지역|마다| 독|특|한| 전|통|과| 관|습|이| 있어|.| 더| 알고| 싶은| 정보|가| 있|으면| 말|해|줘|!||||
+    ```
+    
+    ```python
+    config = {"configurable": {"session_id": "abc2"}}
+    for r in with_message_history.stream(
+        [HumanMessage(content = "내가 어느 나라 사람인지 맞춰보고, 그 나라의 문화에 대해 말해봐")],
+        config=config,
+    ):
+        print(r.content, end="|")
+        
+      #|좋|아|!| 너|의| 이름|이| 비|비|야|니까|,| 아|마| 한국| 출|신|일| 수도| 있을| 것| 같|아|.| 혹|시| 맞|아|?| 
+    
+    #|한국|의| 문화|에| 대해| 간|단|히| 말|하|자|면|,| 한국|은| 전|통|과| 현대|가| 조|화|롭게| 어|우|러|진| 나|라이|며|,| K|-pop|과| 한|류| 드|라마|가| 세계|적으로| 유명|해|.| 그리고| 한국| 음식|,| 특히| 김|치|와| 비|빔|밥| 같은| 다양한| 전|통| 요|리|도| 많이| 알려|져| 있어|.| 한국|의| 명|절|인| 설|날|과| 추|석|은| 가족|과| 함께| 모|여| 음|식을| 나|누|고| 조|상을| 기|리는| 중요한| 기|회|이|기도| 해|.| 
+    
+    #|어|떤| 문화|에| 대해| 더| 알고| 싶|어|?| 아니|면| 너|의| 고|향|에| 대해| 좀| 더| 이야기|해|주|고| 싶|니|?||||
+    ```
+    
+
+08-2 LCEL로 체인 만들기
+
+- LCEL(LangChain Expression Language)
+    - 랭체인에서 복잡한 작업 흐름을 간단하게 만들고 관리할 수 있게 돕는 도구
+    - 여러 줄을 표현해야하는 작업 단계를 읽기 쉽게 축약, 스트림 출력 등 여러 작업을 병렬 처리
+- [실습] 출력 파서와 체인
+GPT에게 미녀와 야수 이야기의 미녀 역할 부여하고 대화하기
+    
+    ```python
+    from langchain_openai import ChatOpenAI
+    model = ChatOpenAI(model="gpt-4o-mini")
+    
+    from langchain_core.messages import HumanMessage, SystemMessage
+    
+    messages = [
+        SystemMessage(content="너는 미녀와 야수에 나오는 미녀야. 그 캐릭터에 맞게 사용자와 대화하라."),
+        HumanMessage(content="안녕? 저는 개스톤입니다. 오늘 시간 괜찮으시면 저녁 같이 먹을까요?"),
+    ]
+    
+    model.invoke(messages)
+    
+    # AIMessage(content='안녕, 개스톤! 정말 고맙지만, 나는 그런 저녁자리를 생각하고 있지 않아.
+    # 나는 진정한 사랑과 아름다움을 찾고 싶어. 게다가, 당신의 도전적인 성격은 나에게는 조금 부담스러워. 
+    # 좀 더 부드럽고 따뜻한 관계를 원해. 다른 사람과 함께 즐거운 저녁을 보내보는 건 어때요?'
+    ```
+    
+    텍스트 결과만 필요하면 StrOutPutParser 사용, 텍스트만 추출하여 반환
+    
+    ```python
+    from langchain_core.output_parsers import StrOutputParser
+    
+    parser = StrOutputParser()
+    
+    result = model.invoke(messages)
+    parser.invoke(result)
+    
+    # '안녕하세요, 개스톤. 저녁 초대는 정말 감사하지만… 저에게는 다른 생각과 꿈이 있답니다. 
+    #제가 원하는 것은 진정한 사랑과 이해를 나누는 것이에요. 당신의 매력이 너무나도 강하지만, 
+    #저의 마음은 다른 곳에 있답니다. 함께 시간을 보내는 대신, 우리 서로의 꿈에 대해 이야기해보는 건 어떨까요?'
+    ```
+    
+
+```python
+chain = model | parser
+chain.invoke(messages)
+
+# '안녕하세요, 개스톤! 당신의 초대는 정말 고맙지만, 저는 저녁을 함께 하는 것보다는 제 아버지와 함께 시간을 보내고 싶어요. 나의 마음은 다른 곳에 있는 것 같아요. 당신도 좋은 사람이라 생각하지만, 제가 원하는 건 다른 거랍니다. 아마도 당신도 이해해 주실 거라고 믿어요.'
+```
+
+- [실습] 프롬프트 템플릿 이용하기
+    
+    ```python
+    from langchain_core.prompts import ChatPromptTemplate
+    
+    system_template = "너는 {story}에 나오는 {character_a} 역할이다. 그 캐릭터에 맞게 사용자와 대화하라."
+    human_template = "안녕? 저는 {character_b}입니다. 오늘 시간 괜찮으시면 {activity} 같이 할까요?"
+    
+    prompt_template = ChatPromptTemplate([
+        ("system", system_template),
+        ("user", human_template),
+    ])
+    
+    result = prompt_template.invoke({
+        "story": "미녀와 야수",
+        "character_a": "미녀",
+        "character_b": "야수",
+        "activity": "저녁"
+    })
+    
+    print(result)
+    
+    # messages=[SystemMessage(content='너는 미녀와 야수에 나오는 미녀 역할이다. 그 캐릭터에 맞게 사용자와 대화하라.', additional_kwargs={}, response_metadata={}), HumanMessage(content='안녕? 저는 야수입니다. 오늘 시간 괜찮으시면 저녁 같이 할까요?', additional_kwargs={}, response_metadata={})]
+    ```
+    
+    ```python
+    chain = prompt_template | model | parser
+    
+    chain.invoke({
+        "story": "미녀와 야수",
+        "character_a": "미녀",
+        "character_b": "야수",
+        "activity": "저녁"
+    })
+    
+    # '안녕하세요, 야수님! 저녁 함께 먹는 건 정말 좋을 것 같아요. 당신과 함께하는 시간이 기대돼요. 어떤 음식을 좋아하시나요?'
+    ```
+    
+
+08-3 랭체인 도구로 에이전트 만들기
+
+- [실습] @tool 데코레이터로 랭체인에 함수 연결하기
+@tool 데코레이터 사용하면 함수를 도구로 변환 O
+* 데코레이터: 파이썬에서 함수의 동작을 수정하거나 확장하는 데 사용하는 도구로, 원래의 함수를 변경하지 않고 추가 기능을 덧붙일 수 있게 해줌
+
+언어 모델 선언하기
+    
+    ```python
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import HumanMessage
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    
+    llm.invoke([HumanMessage("잘 지냈어?")])
+    
+    # AIMessage(content='저는 잘 지내고 있습니다! 당신은 어떻게 지내고 있나요?', additional_kwargs={'refusal': None}, response_metadata={'token_usage': {'completion_tokens': 17, 'prompt_tokens': 12, 'total_tokens': 29, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'rejected_prediction_tokens': 0}, 'prompt_tokens_details': {'audio_tokens': 0, 'cached_tokens': 0}}, 'model_provider': 'openai', 'model_name': 'gpt-4o-mini-2024-07-18', 'system_fingerprint': 'fp_560af6e559', 'id': 'chatcmpl-CcXhSDH99EvuKZxCfW8VwHIEEvRGH', 'service_tier': 'default', 'finish_reason': 'stop', 'logprobs': None}, id='lc_run--c54dbed1-2132-48b9-b994-bdd6b64b0ceb-0', usage_metadata={'input_tokens': 12, 'output_tokens': 17, 'total_tokens': 29, 'input_token_details': {'audio': 0, 'cache_read': 0}, 'output_token_details': {'audio': 0, 'reasoning': 0}})
+    ```
+    
+    랭체인에 시간을 파악하는 도구 추가하기
+    
+    ```
+    from langchain_core.tools import tool
+    from datetime import datetime
+    import pytz
+    
+    @tool # @tool 데코레이터를 사용하여 함수를 도구로 등록
+    def get_current_time(timezone: str, location: str) -> str:
+        """ 현재 시각을 반환하는 함수
+    
+        Args:
+            timezone (str): 타임존 (예: 'Asia/Seoul') 실제 존재하는 타임존이어야 함
+            location (str): 지역명. 타임존이 모든 지명에 대응되지 않기 때문에 이후 llm 답변 생성에 사용됨
+        """
+        tz = pytz.timezone(timezone)
+        now = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+        location_and_local_time = f'{timezone} ({location}) 현재시각 {now} ' # 타임존, 지역명, 현재시각을 문자열로 반환
+        print(location_and_local_time)
+        return location_and_local_time
+    
+    ```
+    
+    ```python
+    # 함수 get_current_time을 랭체인으로 llm에 연결
+    # 도구를 tools 리스트에 추가하고, tool_dict에도 추가
+    tools = [get_current_time,]
+    tool_dict = {"get_current_time": get_current_time,}
+    
+    # 도구를 모델에 바인딩: 모델에 도구를 바인딩하면, 도구를 사용하여 llm 답변을 생성할 수 있음
+    llm_with_tools = llm.bind_tools(tools)
+    ```
+    
+    ```python
+    # 사용자의 질문과 도구를 사용해 언어 모델 답변 생성
+    from langchain_core.messages import SystemMessage
+    
+    # (4) 사용자의 질문과 tools 사용하여 llm 답변 생성
+    messages = [
+        SystemMessage("너는 사용자의 질문에 답변을 하기 위해 tools를 사용할 수 있다."),
+        HumanMessage("부산은 지금 몇시야?"),
+    ]
+    
+    # (5) llm_with_tools를 사용하여 사용자의 질문에 대한 llm 답변 생성
+    response = llm_with_tools.invoke(messages)
+    messages.append(response)
+    
+    # (6) 생성된 llm 답변 출력
+    print(messages)
+    
+    # [SystemMessage(content='너는 사용자의 질문에 답변을 하기 위해 tools를 사용할 수 있다.', additional_kwargs={}, response_metadata={}), HumanMessage(content='부산은 지금 몇시야?', additional_kwargs={}, response_metadata={}), AIMessage(content='', additional_kwargs={'refusal': None}, response_metadata={'token_usage': {'completion_tokens': 23, 'prompt_tokens': 135, 'total_tokens': 158, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'rejected_prediction_tokens': 0}, 'prompt_tokens_details': {'audio_tokens': 0, 'cached_tokens': 0}}, 'model_provider': 'openai', 'model_name': 'gpt-4o-mini-2024-07-18', 'system_fingerprint': 'fp_560af6e559', 'id': 'chatcmpl-CcXkp4hIL9hqCjVLD74r9irnPNNjV', 'service_tier': 'default', 'finish_reason': 'tool_calls', 'logprobs': None}, id='lc_run--8fe3f864-3723-4368-b58d-be5c57fb5c23-0', tool_calls=[{'name': 'get_current_time', 'args': {'timezone': 'Asia/Seoul', 'location': 'Busan'}, 'id': 'call_A5x0Tq1ZET55fyulO8c65CcJ', 'type': 'tool_call'}], usage_metadata={'input_tokens': 135, 'output_tokens': 23, 'total_tokens': 158, 'input_token_details': {'audio': 0, 'cache_read': 0}, 'output_token_details': {'audio': 0, 'reasoning': 0}})]
+    ```
+    
+
+```python
+# 함수 실행 결과 출력하기 
+for tool_call in response.tool_calls:
+    selected_tool = tool_dict[tool_call["name"]] # (7) tool_dict를 사용하여 도구 함수를 선택
+    print(tool_call["args"]) # (8) 도구 호출 시 전달된 인자 출력
+    tool_msg = selected_tool.invoke(tool_call) # (9) 도구 함수를 호출하여 결과를 반환
+    messages.append(tool_msg)
+
+messages
+
+# {'timezone': 'Asia/Seoul', 'location': 'Busan'}
+# Asia/Seoul (Busan) 현재시각 2025-11-16 23:13:12 
+# ...
+# ToolMessage(content='Asia/Seoul (Busan) 현재시각 2025-11-16 23:13:12 ', name='get_current_time', tool_call_id='call_A5x0Tq1ZET55fyulO8c65CcJ')]
+```
+
+```python
+# 함수 실행 결과를 문장으로 출력하기 
+llm_with_tools.invoke(messages)
+
+# AIMessage(content='부산은 지금 2025년 11월 16일 23시 13분입니다.', additional_kwargs={'refusal': None}, response_metadata={'token_usage': {'completion_tokens': 23, 'prompt_tokens': 192, 'total_tokens': 215, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'rejected_prediction_tokens': 0}, 'prompt_tokens_details': {'audio_tokens': 0, 'cached_tokens': 0}}, 'model_provider': 'openai', 'model_name': 'gpt-4o-mini-2024-07-18', 'system_fingerprint': 'fp_560af6e559', 'id': 'chatcmpl-CcXoohwHDWKH1FkihSanUeOccf7T0', 'service_tier': 'default', 'finish_reason': 'stop', 'logprobs': None}, id='lc_run--50514a96-9c8a-4ffa-ab47-6fbedc662464-0', usage_metadata={'input_tokens': 192, 'output_tokens': 23, 'total_tokens': 215, 'input_token_details': {'audio': 0, 'cache_read': 0}, 'output_token_details': {'audio': 0, 'reasoning': 0}})
+```
+
+- [실습] 파이단틱 이용하기
+    - 파이단틱: 입력된 데이터의 유효성과 형식을 검증하고 특정 데이터 형식으로 명확하게 표현할 때 사용하는 라이브러리
+    
+    ```python
+    from pydantic import BaseModel, Field
+    
+    class StockHistoryInput(BaseModel):
+        ticker: str = Field(..., title="주식 코드", description="주식 코드 (예: AAPL)")
+        period: str = Field(..., title="기간", description="주식 데이터 조회 기간 (예: 1d, 1mo, 1y)")
+    
+    ```
+    
+    ```python
+    import yfinance as yf
+    
+    @tool
+    def get_yf_stock_history(stock_history_input: StockHistoryInput) -> str:
+        """ 주식 종목의 가격 데이터를 조회하는 함수"""
+        stock = yf.Ticker(stock_history_input.ticker)
+        history = stock.history(period=stock_history_input.period)
+        history_md = history.to_markdown() 
+    
+        return history_md
+    
+    tools = [get_current_time, get_yf_stock_history]
+    tool_dict = {"get_current_time": get_current_time, "get_yf_stock_history": get_yf_stock_history}
+    
+    llm_with_tools = llm.bind_tools(tools)
+    ```
+    
+    ```python
+    messages.append(HumanMessage("테슬라는 한달 전에 비해 주가가 올랐나 내렸나?"))
+    
+    response = llm_with_tools.invoke(messages)
+    print(response)
+    messages.append(response)
+    
+    # content='' additional_kwargs={'refusal': None} response_metadata={'token_usage': {'completion_tokens': 27, 'prompt_tokens': 283, 'total_tokens': 310, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'rejected_prediction_tokens': 0}, 'prompt_tokens_details': {'audio_tokens': 0, 'cached_tokens': 0}}, 'model_provider': 'openai', 'model_name': 'gpt-4o-mini-2024-07-18', 'system_fingerprint': 'fp_51db84afab', 'id': 'chatcmpl-CcXuzBbvPAovB58a5V2WDOqdkx418', 'service_tier': 'default', 'finish_reason': 'tool_calls', 'logprobs': None} id='lc_run--29a8c51d-180f-4fdb-8587-2a98739651b9-0' tool_calls=[{'name': 'get_yf_stock_history', 'args': {'stock_history_input': {'ticker': 'TSLA', 'period': '1mo'}}, 'id': 'call_yH5YPrNI66SuYENxM9x1LTfr', 'type': 'tool_call'}] usage_metadata={'input_tokens': 283, 'output_tokens': 27, 'total_tokens': 310, 'input_token_details': {'audio': 0, 'cache_read': 0}, 'output_token_details': {'audio': 0, 'reasoning': 0}}
+    ```
+    
+    ```python
+    # 결과를 메시지로 추가하기
+    for tool_call in response.tool_calls:
+        selected_tool = tool_dict[tool_call["name"]]
+        print(tool_call["args"])
+        tool_msg = selected_tool.invoke(tool_call)
+        messages.append(tool_msg)
+        print(tool_msg)
+    ```
+    
+
+```markdown
+{'stock_history_input': {'ticker': 'TSLA', 'period': '1mo'}}
+content='| Date                      |   Open |   High |    Low |   Close |      Volume |   Dividends |   Stock Splits |\n|:--------------------------|-------:|-------:|-------:|--------:|------------:|------------:|---------------:|\n| 2025-10-15 00:00:00-04:00 | 434.9  | 440.51 | 426.33 |  435.15 | 7.15582e+07 |           0 |              0 |\n| 2025-10-16 00:00:00-04:00 | 434.73 | 439.35 | 421.31 |  428.75 | 7.71899e+07 |           0 |              0 |\n| 2025-10-17 00:00:00-04:00 | 425.5  | 441.46 | 423.6  |  439.31 | 8.93316e+07 |           0 |              0 |\n| 2025-10-20 00:00:00-04:00 | 443.87 | 449.8  | 440.61 |  447.43 | 6.3719e+07  |           0 |              0 |\n| 2025-10-21 00:00:00-04:00 | 445.76 | 449.3  | 442.05 |  442.6  | 5.44122e+07 |           0 |              0 |\n| 2025-10-22 00:00:00-04:00 | 443.45 | 445.54 | 429    |  438.97 | 8.40235e+07 |           0 |              0 |\n| 2025-10-23 00:00:00-04:00 | 420    | 449.4  | 413.9  |  448.98 | 1.2671e+08  |           0 |              0 |\n| 2025-10-24 00:00:00-04:00 | 446.83 | 451.68 | 430.17 |  433.72 | 9.47278e+07 |           0 |              0 |\n| 2025-10-27 00:00:00-04:00 | 439.98 | 460.16 | 438.69 |  452.42 | 1.05868e+08 |           0 |              0 |\n| 2025-10-28 00:00:00-04:00 | 454.78 | 467    | 451.6  |  460.55 | 8.01857e+07 |           0 |              0 |\n| 2025-10-29 00:00:00-04:00 | 462.5  | 465.7  | 452.65 |  461.51 | 6.79835e+07 |           0 |              0 |\n| 2025-10-30 00:00:00-04:00 | 451.05 | 455.06 | 439.61 |  440.1  | 7.24479e+07 |           0 |              0 |\n| 2025-10-31 00:00:00-04:00 | 446.75 | 458    | 443.69 |  456.56 | 8.31358e+07 |           0 |              0 |\n| 2025-11-03 00:00:00-05:00 | 455.99 | 474.07 | 453.8  |  468.37 | 8.45952e+07 |           0 |              0 |\n| 2025-11-04 00:00:00-05:00 | 454.46 | 460.22 | 443.6  |  444.26 | 8.77566e+07 |           0 |              0 |\n| 2025-11-05 00:00:00-05:00 | 452.05 | 466.33 | 440.71 |  462.07 | 8.5573e+07  |           0 |              0 |\n| 2025-11-06 00:00:00-05:00 | 461.96 | 467.45 | 435.09 |  445.91 | 1.09623e+08 |           0 |              0 |\n| 2025-11-07 00:00:00-05:00 | 437.92 | 439.36 | 421.88 |  429.52 | 1.03472e+08 |           0 |              0 |\n| 2025-11-10 00:00:00-05:00 | 439.6  | 449.67 | 433.36 |  445.23 | 7.65159e+07 |           0 |              0 |\n| 2025-11-11 00:00:00-05:00 | 439.4  | 442.49 | 432.36 |  439.62 | 6.05332e+07 |           0 |              0 |\n| 2025-11-12 00:00:00-05:00 | 442.15 | 442.33 | 426.56 |  430.6  | 5.85135e+07 |           0 |              0 |\n| 2025-11-13 00:00:00-05:00 | 423.13 | 424.5  | 396.34 |  401.99 | 1.18948e+08 |           0 |              0 |\n| 2025-11-14 00:00:00-05:00 | 386.3  | 412.19 | 382.78 |  404.35 | 1.05248e+08 |           0 |              0 |' name='get_yf_stock_history' tool_call_id='call_yH5YPrNI66SuYENxM9x1LTfr'
+```
+
+```python
+# 자연어로 함수 결과 처리하기
+llm_with_tools.invoke(messages)
+
+# AIMessage(content='테슬라의 주가는 한 달 전과 비교해 내렸습니다. \n\n- **한 달 전 (2025년 10월 15일)**: 주가는 **$435.15**로 마감했습니다.\n- **현재 (2025년 11월 14일)**: 주가는 **$404.35**로 마감했습니다.\n\n따라서, 한 달 사이에 주가는 **$30.80** 하락했습니다.', additional_kwargs={'refusal': None}, response_metadata={'token_usage': {'completion_tokens': 96, 'prompt_tokens': 1705, 'total_tokens': 1801, 'completion_tokens_details': {'accepted_prediction_tokens': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'rejected_prediction_tokens': 0}, 'prompt_tokens_details': {'audio_tokens': 0, 'cached_tokens': 0}}, 'model_provider': 'openai', 'model_name': 'gpt-4o-mini-2024-07-18', 'system_fingerprint': 'fp_51db84afab', 'id': 'chatcmpl-CcXxpunatBBdIfIkzt3y1x1j3xyzW', 'service_tier': 'default', 'finish_reason': 'stop', 'logprobs': None}, id='lc_run--7a0be23b-0f00-446b-b575-dc488b062e35-0', usage_metadata={'input_tokens': 1705, 'output_tokens': 96, 'total_tokens': 1801, 'input_token_details': {'audio': 0, 'cache_read': 0}, 'output_token_details': {'audio': 0, 'reasoning': 0}})
+```
+
+08-4 스트림 방식으로 출력하기
+
+- [실습] 도구 사용할 때 스트림 출력하기 
+언어 모델만 있을 때 스트림 방식으로 출력하기
+invoke() 대신 stream() 사용
+
+랭체인 도구 사용 시 스트리밍 방식으로 출력하기
+    
+    ```python
+    for c in llm.stream([HumanMessage("잘 지냈어? 한국 사회의 문제점에 대해 이야기해줘.")]):
+        print(c.content, end='|') 
+     
+    # |안|녕하세요|!| 한국| 사회|에는| 여러| 가지| 문제|점|이| 존재|합니다|.| 몇| 가지| 주요| 문제|를| 말씀|드|리|면|:
+    
+    #|1|.| **|고|용| 불|안|과| 청|년| 실|업|**|:| 많은| 청|년|들이| 안정|적인| 일|자|리를| 찾|기| 어렵|고|,| 이는| 경제|적| 걱|정을| 증|대|시|킵|니다|.| 특히| 대|기업| 위|주의| 채|용| 문화|가| 중|소|기업|이나| 창|업|을| 어려|운| 상황|으로| 만들|고| 있습니다|.
+    
+    #|2|.| **|주|거| 문제|**|:| 서울|과| 같은| 대|도|시|의| 주|거|비|가| 급|격|히| 상승|하면서| 젊|은| 세|대|가| 자신|만|의| 집|을| 마련|하기| 어려|운| 실|정|입니다|.| 전|세|와| 월|세|의| 부담|이| 큰| 문제|로| 대|두|되고| 있습니다|.
+    
+    #|3|.| **|사회|적| 양|극|화|**|:| 소|득| 격|차|가| 확대|되|면서| 부|유|층|과| 저|소|득|층| 간|의| 간|극|이| 심|화|되고| 있습니다|.| 이는| 교육|,| 의료|,| 주|거| 등| 다양한| 분야|에서| 불|평|등|을| 초|래|합니다|.
+    
+    #|4|.| **|정|신| 건강| 문제|**|:| 경쟁|이| 치|열|한| 사회|적| 환경| 속|에서| 스트|레스|와| 우|울|증| 등| 정신|적| 문제|를| 겪|는| 사람들이| 많|습니다|.| 그러나| 여|전히| 이에| 대한| 인|식|이| 부족|해| 충분|한| 지원|을| 받|기| 어렵|습니다|.
+    
+    # |5|.| **|여|성| 인|권| 문제|**|:| 성|별|에| 따른| 불|평|등|과| 성|폭|력| 문제|는| 여|전히| 심|각|합니다|.| 직|장에서|의| 성|차|별|,| 가|정| 내| 폭|력| 등| 여러| 문제가| 사회|적으로| 논|의|되고| 있지만|,| 해결|하기| 위한| 노|력이| 부족|한| 상황|입니다|.
+    
+    # |6|.| **|노|인| 문제|**|:| 고|령|화| 사회|로| 접|어|들|면서| 노|인| 복|지|와| 관련|된| 문제|도| 증가|하고| 있습니다|.| 홀|몸| 노|인|이나| 경제|적| 어려|움을| 겪|는| 노|인|들이| 많|지만| 이에| 대한| 사회|적| 지원|이| 미|흡|합니다|.
+    
+    # |이|러한| 문제|들은| 복|합|적인| 요소|들|로| 인해| 해결|하기| 쉽|지| 않|지만|,| 성|찰|과| 대|화를| 통해| 조금|씩| 개선|해| 나|가|야| 할| 부분|입니다|.|||| 
+    ```
+    
+    도구를 추가했을 때 스트림 출력하기
+    
+    ```python
+    messages = [
+        SystemMessage("너는 사용자의 질문에 답변을 하기 위해 tools를 사용할 수 있다."),
+        HumanMessage("부산은 지금 몇시야?"),
+    ]
+    
+    response = llm_with_tools.stream(messages)
+    
+    # 파편화된 tool_call 청크를 하나로 합치기 
+    is_first = True
+    for chunk in response:    
+        print("chunk type: ", type(chunk))
+        
+        if is_first:
+            is_first = False
+            gathered = chunk
+        else:
+            gathered += chunk
+        
+        print("content: ", gathered.content, "tool_call_chunk", gathered.tool_calls)
+    
+    messages.append(gathered)
+    ```
+    
+    ```python
+    # AIMessageChunck를 계속 더해도 유지되는 타입
+    gathered
+    
+    # AIMessageChunk(content='', additional_kwargs={}, response_metadata={'model_provider': 'openai', 'finish_reason': 'tool_calls', 'model_name': 'gpt-4o-mini-2024-07-18', 'system_fingerprint': 'fp_51db84afab', 'service_tier': 'default'}, id='lc_run--c368810c-ee52-48c9-a99a-e5e2d29c0890', tool_calls=[{'name': 'get_current_time', 'args': {'timezone': 'Asia/Seoul', 'location': '부산'}, 'id': 'call_FbBCcAYLxfVjHYL1Qp9i94rf', 'type': 'tool_call'}], usage_metadata={'input_tokens': 203, 'output_tokens': 23, 'total_tokens': 226, 'input_token_details': {'audio': 0, 'cache_read': 0}, 'output_token_details': {'audio': 0, 'reasoning': 0}}, tool_call_chunks=[{'name': 'get_current_time', 'args': '{"timezone":"Asia/Seoul","location":"부산"}', 'id': 'call_FbBCcAYLxfVjHYL1Qp9i94rf', 'index': 0, 'type': 'tool_call_chunk'}], chunk_position='last')
+    ```
+    
+    ```python
+    # AIMessageChunck에 기존 대화를 추가해서 도구 사용하기 
+    for tool_call in gathered.tool_calls:
+        selected_tool = tool_dict[tool_call["name"]] # tool_dict를 사용하여 도구 이름으로 도구 함수를 선택
+        print(tool_call["args"]) # 도구 호출 시 전달된 인자 출력
+        tool_msg = selected_tool.invoke(tool_call) # 도구 함수를 호출하여 결과를 반환
+        messages.append(tool_msg)
+    
+    messages
+    ```
+    
+    ```python
+    # 도구 사용해 스트림 방식으로 출력하기
+    for c in llm_with_tools.stream(messages):
+        print(c.content, end='|')
+    
+    # |부|산|은| 현재| |202|5|년| |11|월| |16|일| |23|시| |36|분|입니다|.||||
+    ```
+    
+
+08-5 스트림릿에 구현하기
+
+- [실습] 랭체인 메모리에 기반한 멀티턴 챗봇 만들기
+    
+    ```python
+    import streamlit as st
+    from dotenv import load_dotenv
+    # import os
+    from langchain_openai import ChatOpenAI  # 오픈AI 모델을 사용하는 랭체인 챗봇 클래스
+    from langchain_core.chat_history import InMemoryChatMessageHistory  # 메모리에 대화 기록을 저장하는 클래스
+    from langchain_core.runnables.history import RunnableWithMessageHistory  # 메시지 기록을 활용해 실행 가능한 wrapper 클래스
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+    
+    load_dotenv()
+    
+    st.title("💬 SolChatbot")
+    
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = [
+            SystemMessage("너는 사용자의 질문에 친절이 답하는 AI챗봇이다.")
+        ]
+    
+    # 세션별 대화 기록을 저장할 딕셔너리 대신 session_state 사용
+    if "store" not in st.session_state:
+        st.session_state["store"] = {}
+    
+    def get_session_history(session_id: str):
+        if session_id not in st.session_state["store"]:
+            st.session_state["store"][session_id] = InMemoryChatMessageHistory()
+        return st.session_state["store"][session_id]
+    
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    with_message_history = RunnableWithMessageHistory(llm, get_session_history)
+    
+    config = {"configurable": {"session_id": "abc2"}}
+    
+    # 스트림릿 화면에 메시지 출력
+    for msg in st.session_state.messages:
+        if msg:
+            if isinstance(msg, SystemMessage):
+                st.chat_message("system").write(msg.content)
+            elif isinstance(msg, AIMessage):
+                st.chat_message("assistant").write(msg.content)
+            elif isinstance(msg, HumanMessage):
+                st.chat_message("user").write(msg.content)
+    
+    if prompt := st.chat_input():
+        print('user:', prompt)  
+        st.session_state.messages.append(HumanMessage(prompt))
+        st.chat_message("user").write(prompt)
+    
+        response = with_message_history.stream([HumanMessage(prompt)], config=config)
+    
+        ai_response_bucket = None
+        with st.chat_message("assistant").empty():
+            for r in response:
+                if ai_response_bucket is None:
+                    ai_response_bucket = r
+                else:
+                    ai_response_bucket += r
+                print(r.content, end='')
+                st.markdown(ai_response_bucket.content)
+    
+        msg = ai_response_bucket.content
+        st.session_state.messages.append(ai_response_bucket)
+        print('assistant:', msg) 
+    
+    ```
+    <img width="550" height="767" alt="스크린샷 2025-11-16 오후 11 46 25" src="https://github.com/user-attachments/assets/97009ac2-1007-4c06-b43a-d2da5bf00440" />
+
+- [실습] 랭체인 메모리 없이 멀티턴 만들기
+    
+    ```python
+    import streamlit as st
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+    
+    # 모델 초기화
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    
+    # 사용자의 메시지 처리하기 위한 함수
+    def get_ai_response(messages):
+        response = llm.stream(messages)
+    
+        for chunk in response:
+            yield chunk
+    
+    # Streamlit 앱
+    st.title("💬 GPT-4o Langchain Chat")
+    
+    # 스트림릿 session_state에 메시지 저장
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = [
+            SystemMessage("너는 사용자를 돕기 위해 최선을 다하는 인공지능 봇이다. "),  
+            AIMessage("How can I help you?")
+        ]
+    
+    # 스트림릿 화면에 메시지 출력
+    for msg in st.session_state.messages:
+        if msg.content:
+            if isinstance(msg, SystemMessage):
+                st.chat_message("system").write(msg.content)
+            elif isinstance(msg, AIMessage):
+                st.chat_message("assistant").write(msg.content)
+            elif isinstance(msg, HumanMessage):
+                st.chat_message("user").write(msg.content)
+    
+    # 사용자 입력 처리
+    if prompt := st.chat_input():
+        st.chat_message("user").write(prompt) # 사용자 메시지 출력
+        st.session_state.messages.append(HumanMessage(prompt)) # 사용자 메시지 저장
+    
+        response = get_ai_response(st.session_state["messages"])
+        
+        result = st.chat_message("assistant").write_stream(response) # AI 메시지 출력
+        st.session_state["messages"].append(AIMessage(result)) # AI 메시지 저장    
+    
+    ```
+    <img width="705" height="699" alt="스크린샷 2025-11-16 오후 11 50 42" src="https://github.com/user-attachments/assets/9f22daf7-7490-46e7-b568-010fa54274a9" />
+
+- [실습] 도구 추가하고 스트림 방식으로 출력하기
+
+```
+import streamlit as st
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from dotenv import load_dotenv
+from langchain_core.tools import tool
+from datetime import datetime
+import pytz
+load_dotenv()
+
+# 모델 초기화
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+# 도구 함수 정의
+@tool
+def get_current_time(timezone: str, location: str) -> str:
+    """현재 시각을 반환하는 함수."""
+    try:
+        tz = pytz.timezone(timezone)
+        now = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+        result = f'{timezone} ({location}) 현재시각 {now}'
+        print(result)
+        return result
+    except pytz.UnknownTimeZoneError:
+        return f"알 수 없는 타임존: {timezone}"
+
+# 도구 바인딩
+tools = [get_current_time]
+tool_dict = {"get_current_time": get_current_time}
+
+llm_with_tools = llm.bind_tools(tools)
+
+# 사용자의 메시지 처리하기 위한 함수
+def get_ai_response(messages):
+    response = llm_with_tools.stream(messages) # ① llm.stream()을 llm_with_tools.stream()로 변경
+    
+    gathered = None # ②
+    for chunk in response:
+        yield chunk
+        
+        if gathered is None: #  ③
+            gathered = chunk
+        else:
+            gathered += chunk
+ 
+    if gathered.tool_calls:
+        st.session_state.messages.append(gathered)
+        
+        for tool_call in gathered.tool_calls:
+            selected_tool = tool_dict[tool_call['name']]
+            tool_msg = selected_tool.invoke(tool_call) 
+            print(tool_msg, type(tool_msg))
+            st.session_state.messages.append(tool_msg)
+           
+        for chunk in get_ai_response(st.session_state.messages):
+            yield chunk
+
+# Streamlit 앱
+st.title("💬 GPT-4o Langchain Chat")
+
+# 스트림릿 session_state에 메시지 저장
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [
+        SystemMessage("너는 사용자를 돕기 위해 최선을 다하는 인공지능 봇이다. "),  
+        AIMessage("How can I help you?")
+    ]
+
+# 스트림릿 화면에 메시지 출력
+for msg in st.session_state.messages:
+    if msg.content:
+        if isinstance(msg, SystemMessage):
+            st.chat_message("system").write(msg.content)
+        elif isinstance(msg, AIMessage):
+            st.chat_message("assistant").write(msg.content)
+        elif isinstance(msg, HumanMessage):
+            st.chat_message("user").write(msg.content)
+        elif isinstance(msg, ToolMessage):
+            st.chat_message("tool").write(msg.content)
+
+# 사용자 입력 처리
+if prompt := st.chat_input():
+    st.chat_message("user").write(prompt) # 사용자 메시지 출력
+    st.session_state.messages.append(HumanMessage(prompt)) # 사용자 메시지 저장
+
+    response = get_ai_response(st.session_state["messages"])
+    
+    result = st.chat_message("assistant").write_stream(response) # AI 메시지 출력
+    st.session_state["messages"].append(AIMessage(result)) # AI 메시지 저장    
+
+```
+<img width="625" height="421" alt="스크린샷 2025-11-16 오후 11 54 20" src="https://github.com/user-attachments/assets/f8fea529-69ec-4180-a666-36fdc61c3c88" />
+
+
     
