@@ -3334,6 +3334,481 @@ if prompt := st.chat_input():
     st.session_state["messages"].append(AIMessage(result)) # AI 메시지 저장    
 
 ```
+
+### 9장 RAG로 문서에 기반해 답변하는 챗봇 만들기
+
+09-1 RAG란 무엇일까?
+
+- 언어 모델과 RAG의 작동 방식
+    - 언어 모델은 이전 문장들을 바탕으로 다음 나올 문장을 확률 계산해서 가장 가능성이 높다고 판단되는 단어와 문장을 생성함
+    - 언어 모델은 과거에 학습한 데이터를 기반으로 계산된 결과를 줘서 환각 현상이 발생함
+    - RAG는 필요한 정보를 빠르게 검색해서 언어 모델에게 전달하고 그것 기반으로 답변하라고 알려 줌
+- 기본적인 언어 모델의 답변과 RAG의 차이
+    - 언어모델: 근거 있는 정보인 지 확인이 어려움
+    - RAG: 질문과 관련된 문서를 찾아 그 문서 바탕으로 답변 제공
+- 청킹: 대량의 문서를 쪽지 단위로 자르기
+    - 많은 양의 문서를 전달하고 답을 요청하게 되면 생기는 문제
+        1. 언어 모델이  한 번에 처리할 수 있는 텍스트 길이를 초과할 수 있음
+        2. 언어 모델이 문서에 필요한 정보를 제대로 찾지 못할 수 있음
+        3. 대화형 방식으로 진행할 경우 매번 수백 페이지의 문서를 언어 모델에 입력해서 높은 토큰 비용 발생
+    - 컨텍스트 윈도우: 언어 모델이 한 번에 처리할 수 있는 텍스트 길이의 한계
+    - 청크: 청킹 작업으로 나누어진 문서 조각
+    - RAG는 청크 단위로 문서를 나누고 사용자의 질문과 가장 유사한 청크를 찾아 질문과 함께 언어 모델에 전달하여 문서에 기반한 답변을 생성함
+- 임베딩: 텍스트를 벡터로 변환하기
+    - 임베딩: 각 청크의 텍스트를 벡터 공간에 숫자 형태로 변환하는 과정
+    - 벡터: 정보를 수치로 표현하여 일렬로 나열한 것
+        - eg. [키, 몸무게, 위도, 경도, 출생연도] 사람 정보를 5차원 벡터로 임베딩
+        - 마이클 조던: [198, 98, 40.67, -73.94, 1963]
+    - 코사인 유사도: 유사도 계산 방법, 1에 가까울 수록 유사도가 높음
+- 벡터 DB와 리트리버
+    - 벡터DB
+        - 벡터로 변환된 결과를 저장하고 텍스트 간의 유사도를 계산해서 사용자가 입력한 질문과 가장 유사한 청크를 찾아낼 때 유용
+        - eg. 크로마DB, FAISS, 파인콘
+    - 리트리버
+        - 사용자가 질문한 정보에 적절한 답을 생성하는 데 필요한 데이터를 가져오는 역할
+- 질의 확장
+    - 사용자의 질문을 그대로 검색하는 게 아니라 질문의 문맥을 파악해 적절한 질문으로 변환 후 그 질문을 벡터로 임베딩해서 검색하는 과정 필요
+    - 사용자 질문을 더 명확하게 수정하는 작업
+
+09-2 RAG 기반한 챗봇 구현하기
+
+- [실습] PDF 파일 텍스트로 변환하고 청크 단위로 쪼개기
+    
+    ```python
+    %pip install PyMuPDF pypdf langchain langchain_community
+    ```
+    
+    ```python
+    # pyPDFLoader 사용하기
+    
+    from langchain_community.document_loaders import PyPDFLoader
+    
+    # PDF 파일을 읽어서 텍스트 데이터를 추출합니다.
+    loader = PyPDFLoader('C:/github/gpt_agent_2025_easyspub/chap09/data/OneNYC_2050_Strategic_Plan.pdf')
+    data_nyc = loader.load()
+    print(data_nyc)
+    ```
+    
+    ```python
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    
+    # 텍스트 데이터를 1000자 단위로 나눕니다. overlap은 100자로 설정합니다.
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    all_splits = text_splitter.split_documents(data_nyc)
+    ```
+    
+    ```
+    for i, split in enumerate(all_splits):
+        print(f"Split {i+1}:------------------------------------\n")
+        print(split)
+    ```
+    
+    ```python
+    print(type(all_splits[0]))
+    ```
+    
+    ```python
+    # 2040 서울도시기본계획 문서 청킹하기
+    loader_seoul = PyPDFLoader('/Users/solbi/Documents/GitHub/study-gpt_agent/chap09/sec02/data/2040_seoul_plan.pdf')
+    data_seoul = loader_seoul.load()
+    seoul_splits = text_splitter.split_documents(data_seoul)
+    for i, split in enumerate(seoul_splits):
+        print(f"Split {i+1}:------------------------------------")
+        print(split)
+    
+    ```
+    
+    ```python
+    # 오버랩 처리 전 청크 출력하기 
+    print(seoul_splits[50].page_content)
+    print('----------------------')
+    print(seoul_splits[51].page_content)
+    ```
+    
+    ```python
+    # 오버랩 처리 후 청크 출력하기 
+    for i in range(len(seoul_splits) - 1):
+        seoul_splits[i].page_content += "\n"+ seoul_splits[i + 1].page_content[:100]
+    
+    print(seoul_splits[50].page_content)
+    print('----------------------')
+    print(seoul_splits[51].page_content)
+    ```
+    
+    ```python
+    # 청크 출력하기 
+    print(len(all_splits))
+    all_splits.extend(seoul_splits)
+    print(len(all_splits))
+    ```
+    
+
+- [실습] 오픈AI 임베딩 모델 사용하기
+    
+    ```python
+    # 크로마 DB를 사용하기 위한 라이브러리 설치
+    %pip install langchain_chroma langchain_openai
+    ```
+    
+    ```python
+    from langchain_openai import OpenAIEmbeddings 
+    from dotenv import load_dotenv
+    import os
+    
+    load_dotenv()
+    
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+    
+    embedding = OpenAIEmbeddings(model='text-embedding-3-large', api_key=OPENAI_API_KEY)
+    v = embedding.embed_query("뉴욕의 온실가스 저감 정책은 뭐야?")
+    print(v)
+    print(len(v))
+    
+    # [-0.005292298272252083, -0.049610063433647156, -0.012534075416624546, 0.008485617116093636, -0.04008990526199341, ...
+    ```
+    
+- [실습] 벡터 DB와 리트리버
+    
+    ```python
+    from langchain_chroma import Chroma
+    import os
+    
+    persist_directory = '../chroma_store'	
+    
+    # 저장된 크로마 DB가 없다면 새로 만들기
+    if not os.path.exists(persist_directory):
+        print("Creating new Chroma store")
+        vectorstore = Chroma.from_documents(
+            documents=all_splits,
+            embedding=embedding,
+            persist_directory=persist_directory
+        )
+    
+    else:
+        print("Loading existing Chroma store")
+        vectorstore = Chroma(		
+            persist_directory=persist_directory, 
+            embedding_function=embedding
+        )
+    ```
+    
+    ```python
+    # 유사 청크 가져와 질문하기
+    retriever = vectorstore.as_retriever(k=3)
+    docs = retriever.invoke("서울시의 환경 정책에 대해 궁금해")
+    
+    for d in docs:
+        print(d)
+        print('------')
+    ```
+    
+- [실습] 주어진 청크에 기반하여 언어 모델로 답변 생성하기
+    
+    ```python
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder 
+    from langchain.chains.combine_documents import create_stuff_documents_chain 
+    from langchain_openai import ChatOpenAI 
+    
+    chat = ChatOpenAI(model="gpt-4o-mini") 
+    
+    question_answering_prompt = ChatPromptTemplate.from_messages(
+        [
+            ( 
+                "system",
+                "사용자의 질문에 대해 아래 context에 기반하여 답변하라.:\n\n{context}",
+            ),
+            MessagesPlaceholder(variable_name="messages"), 
+        ]
+    )
+    
+    document_chain = create_stuff_documents_chain(chat, question_answering_prompt) 
+    ```
+    
+    ```python
+    from langchain.memory import ChatMessageHistory
+    
+    # 채팅 메시지 저장할 메모리 객체 생성
+    chat_history = ChatMessageHistory() 
+    # 사용자 질문을 메모리에 저장
+    chat_history.add_user_message("서울시의 온실가스 저감 정책에 대해 알려줘.") 
+    
+    # 문서 검색하고 답변 생성
+    answer = document_chain.invoke(
+        {
+            "messages": chat_history.messages,
+            "context": docs,
+        }
+    )
+    
+    # 생성된 답변 메모리에 저장
+    chat_history.add_ai_message(answer) 
+    
+    print(answer)
+    ```
+    
+    ```python
+    for m in chat_history.messages:
+        print(m)
+    ```
+    
+- [실습] 질의 확장 구현하기
+    
+    ```python
+    from langchain_core.output_parsers import StrOutputParser # 문자열 출력 파서를 불러옵니다.
+    ```
+    
+    ```
+    query_for_nyc = "뉴욕은?"
+    
+    # query augmentation 
+    # 기존 대화 내용을 활용해 query_augmentation 수행
+    query_augmentation_prompt = ChatPromptTemplate.from_messages(
+        [
+            MessagesPlaceholder(variable_name="messages"), # 기존 대화 내용
+            (
+                "system",
+                "기존의 대화 내용을 활용하여 사용자의 아래 질문의 의도를 파악하여 명료한 한 문장의 질문으로 변환하라. 대명사나 이, 저, 그와 같은 표현을 명확한 명사로 표현하라. :\n\n{query}",
+            ),
+        ]
+    )
+    ```
+    
+    ```python
+    query_augmentation_chain = query_augmentation_prompt | chat | StrOutputParser()
+    ```
+    
+    ```python
+    # 질문을 더 명확하게 변환하기
+    augmented_query = query_augmentation_chain.invoke({
+        "messages": chat_history.messages,
+        "query": query_for_nyc  
+    })
+    
+    print(augmented_query)
+    ```
+    
+    ```python
+    # 리트리버 실행하고 결과 출력
+    docs = retriever.invoke(augmented_query)
+    
+    for d in docs:
+        print(d)
+        print('------')
+    ```
+    
+    ```python
+    # 언어 모델에서 답변 생성하기
+    chat_history.add_user_message(query_for_nyc) # query_for_nyc에 "뉴욕은?" 추가
+    
+    answer = document_chain.invoke(
+        {
+            "messages": chat_history.messages,
+            "context": docs,
+        }
+    )
+    
+    # 생성된 답변 메모리에 저장
+    chat_history.add_ai_message(answer) 
+    
+    print(answer)
+    ```
+    
+
+09-3 스트림릿으로 챗봇완성하기
+
+- [실습] 기본 스트림릿 코드에 리트리버 추가하기
+    
+    ```python
+    # 임베딩 모델 선언하기
+    from langchain_openai import OpenAIEmbeddings
+    embedding = OpenAIEmbeddings(model='text-embedding-3-large')
+    
+    # 언어 모델 불러오기
+    from langchain_openai import ChatOpenAI
+    llm = ChatOpenAI(model="gpt-4o")
+    
+    # Load Chroma store
+    from langchain_chroma import Chroma
+    print("Loading existing Chroma store")
+    persist_directory = 'C:/github/gpt_agent_2025_easyspub/chap09/chroma_store'
+    
+    vectorstore = Chroma(
+        persist_directory=persist_directory, 
+        embedding_function=embedding
+    )
+    
+    # Create retriever
+    retriever = vectorstore.as_retriever(k=3)
+    
+    # Create document chain
+    from langchain.chains.combine_documents import create_stuff_documents_chain
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+    from langchain_core.output_parsers import StrOutputParser # 문자열 출력 파서를 불러옵니다.
+    
+    question_answering_prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "사용자의 질문에 대해 아래 context에 기반하여 답변하라.:\n\n{context}",
+            ),
+            MessagesPlaceholder(variable_name="messages"),
+        ]
+    )
+    
+    document_chain = create_stuff_documents_chain(llm, question_answering_prompt) | StrOutputParser()
+    
+    # query augmentation chain
+    query_augmentation_prompt = ChatPromptTemplate.from_messages(
+        [
+            MessagesPlaceholder(variable_name="messages"), # 기존 대화 내용
+            (
+                "system",
+                "기존의 대화 내용을 활용하여 사용자의 아래 질문의 의도를 파악하여 명료한 한 문장의 질문으로 변환하라. 대명사나 이, 저, 그와 같은 표현을 명확한 명사로 표현하라. :\n\n{query}",
+            ),
+        ]
+    )
+    
+    query_augmentation_chain = query_augmentation_prompt | llm | StrOutputParser()
+    
+    ```
+    
+    ```python
+    import streamlit as st
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+    import retriever
+    
+    # 모델 초기화
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    
+    # 사용자의 메시지 처리하기 위한 함수
+    def get_ai_response(messages, docs):    
+        response = retriever.document_chain.stream({
+            "messages": messages,
+            "context": docs
+        })
+    
+        for chunk in response:
+            yield chunk
+    
+    # Streamlit 앱
+    st.title("💬 GPT-4o Langchain Chat")
+    
+    # 스트림릿 session_state에 메시지 저장
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = [
+            SystemMessage("너는 문서에 기반해 답변하는 도시 정책 전문가야 "),  
+            AIMessage("How can I help you?")
+        ]
+    
+    # 스트림릿 화면에 메시지 출력
+    for msg in st.session_state.messages:
+        if msg.content:
+            if isinstance(msg, SystemMessage):
+                st.chat_message("system").write(msg.content)
+            elif isinstance(msg, AIMessage):
+                st.chat_message("assistant").write(msg.content)
+            elif isinstance(msg, HumanMessage):
+                st.chat_message("user").write(msg.content)
+    
+    # 사용자 입력 처리
+    if prompt := st.chat_input():
+        st.chat_message("user").write(prompt) # 사용자 메시지 출력
+        st.session_state.messages.append(HumanMessage(prompt)) # 사용자 메시지 저장
+    
+        augmented_query = retriever.query_augmentation_chain.invoke({
+            "messages": st.session_state["messages"],
+            "query": prompt,
+        })
+        print("augmented_query\t", augmented_query)
+    
+        # 관련 문서 검색
+        print("관련 문서 검색")
+        docs = retriever.retriever.invoke(f"{prompt}\n{augmented_query}")
+    
+        for doc in docs:
+            print('---------------')
+            print(doc)   
+        print("===============")
+    
+        with st.spinner(f"AI가 답변을 준비 중입니다... '{augmented_query}'"):
+            response = get_ai_response(st.session_state["messages"], docs)
+            result = st.chat_message("assistant").write_stream(response) # AI 메시지 출력
+        st.session_state["messages"].append(AIMessage(result)) # AI 메시지 저장    
+    
+    ```
+    
+- [실습] 출처 표기하기
+    
+    ```python
+    import streamlit as st
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+    import retriever
+    
+    # 모델 초기화
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    
+    # 사용자의 메시지 처리하기 위한 함수
+    def get_ai_response(messages, docs):    
+        response = retriever.document_chain.stream({
+            "messages": messages,
+            "context": docs
+        })
+    
+        for chunk in response:
+            yield chunk
+    
+    # Streamlit 앱
+    st.title("💬 GPT-4o Langchain Chat")
+    
+    # 스트림릿 session_state에 메시지 저장
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = [
+            SystemMessage("너는 문서에 기반해 답변하는 도시 정책 전문가야 "),  
+            AIMessage("How can I help you?")
+        ]
+    
+    # 스트림릿 화면에 메시지 출력
+    for msg in st.session_state.messages:
+        if msg.content:
+            if isinstance(msg, SystemMessage):
+                st.chat_message("system").write(msg.content)
+            elif isinstance(msg, AIMessage):
+                st.chat_message("assistant").write(msg.content)
+            elif isinstance(msg, HumanMessage):
+                st.chat_message("user").write(msg.content)
+    
+    # 사용자 입력 처리
+    if prompt := st.chat_input():
+        st.chat_message("user").write(prompt) # 사용자 메시지 출력
+        st.session_state.messages.append(HumanMessage(prompt)) # 사용자 메시지 저장
+    
+        augmented_query = retriever.query_augmentation_chain.invoke({
+            "messages": st.session_state["messages"],
+            "query": prompt,
+        })
+        print("augmented_query\t", augmented_query)
+    
+        # 관련 문서 검색
+        print("관련 문서 검색")
+        docs = retriever.retriever.invoke(f"{prompt}\n{augmented_query}")
+    
+        for doc in docs:
+            print('---------------')
+            print(doc)   
+            with st.expander(f"**문서:** {doc.metadata.get('source', '알 수 없음')}"):
+                # 파일명과 페이지 정보 표시
+                st.write(f"**page:**{doc.metadata.get('page', '')}")
+                st.write(doc.page_content)
+        print("===============")
+    
+        with st.spinner(f"AI가 답변을 준비 중입니다... '{augmented_query}'"):
+            response = get_ai_response(st.session_state["messages"], docs)
+            result = st.chat_message("assistant").write_stream(response) # AI 메시지 출력
+        st.session_state["messages"].append(AIMessage(result)) # AI 메시지 저장    
+    
+    ```
 <img width="625" height="421" alt="스크린샷 2025-11-16 오후 11 54 20" src="https://github.com/user-attachments/assets/f8fea529-69ec-4180-a666-36fdc61c3c88" />
 
 
