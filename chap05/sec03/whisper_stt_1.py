@@ -62,7 +62,7 @@ def speaker_diarization(
     ):
     pipeline = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1",
-        use_auth_token="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"
+        use_auth_token=""
     )
 
     # cuda가 사용 가능한 경우 cuda를 사용하도록 설정
