@@ -401,6 +401,8 @@ with open("싼기타_비싼기타.rttm", "w", encoding='utf-8') as rttm:
     diarization.write_rttm(rttm)
 
 ```
+- [실습] 판다스로 문장 분석하고 화자 매칭하기
+whisper_stt_.py 코드 참고
 
 05-4 회의록을 정리하는 AI 서기 완성하기
 
