@@ -1,32 +1,12 @@
 [
     {
         "no": 1,
-        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) Many people are sitting at desks working.\n- (2) There is a large display board on the wall.\n- (3) The lights in the room are turned off.\n- (4) There are structures visible at the top of the image.",
-        "img": "busan_dive.jpg"
+        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) Various kinds of bread are displayed.\n- (2) The clerk is wearing a white cap.\n- (3) People are lining up in front of the counter.\n- (4) Price tags for the bread are displayed.",
+        "img": "mangwon_bakery.jpg"
     },
     {
         "no": 2,
-        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) Three people are sitting around a table.\n- (2) The person in the middle has purple hair.\n- (3) There are various foods on the table.\n- (4) The person on the left is wearing yellow clothes.",
-        "img": "kdemon.jpg"
-    },
-    {
-        "no": 3,
-        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) A yellow sculpture is located in the center.\n- (2) The background building has the word \"Local Stitch\" visible.\n- (3) A bench is located on the right side of the image.\n- (4) There is a space with trees planted in the image.",
-        "img": "local_stitch.jpg"
-    },
-    {
-        "no": 4,
-        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) People are sitting in the café.\n- (2) Large windows surround the café.\n- (3) One person is standing in front of the cashier.\n- (4) The café walls are yellow and white.",
-        "img": "local_stitch_terrarosa.jpg"
-    },
-    {
-        "no": 5,
-        "eng": "Which of the following descriptions of the image is incorrect?\n\n- (1) There is a coffee shop on the second floor.\n- (2) The building's exterior is made of red bricks.\n- (3) A no parking sign is visible.\n- (4) An orange cone is placed on the sidewalk.",
-        "img": "mangwon.jpg"
-    },
-    {
-        "no": 6,
-        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) Various types of bread are displayed.\n- (2) The staff member is wearing a hat.\n- (3) The price tags of the bread are not visible.\n- (4) A glass display case is used.",
-        "img": "mangwon_bakery.jpg"
+        "eng": "Which of the following descriptions of the image is incorrect?\n- (1) Many people are gathered in one place.\n- (2) There is a large screen in the center.\n- (3) Everyone is using laptops.\n- (4) Lights are installed on the ceiling.",
+        "img": "busan_dive.jpg"
     }
 ]

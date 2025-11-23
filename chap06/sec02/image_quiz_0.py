@@ -62,9 +62,9 @@ print(q)
 
 
 
-txt = '' # ①  문제들을 계속 붙여 나가기 위해 빈 문자열 선언
+txt = '' # 문제들을 계속 붙여 나가기 위해 빈 문자열 선언
 no = 1 # 문제 번호를 위해 선언
-for g in glob('./chap06/data/images/*.jpg'):  # ②
+for g in glob('./chap06/data/images/*.jpg'): 
     try:
         q = image_quiz(g) # 문제 출제 (가끔 GPT에서 에러 발생할 수 있으므로 try문 사용)
     except Exception as e:
@@ -74,10 +74,10 @@ for g in glob('./chap06/data/images/*.jpg'):  # ②
     divider = f'## 문제 {no}\n\n'
     print(divider)
     
-    txt += divider  # ③
+    txt += divider  
     # 파일명 추출해 이미지 링크 만들기
     filename = os.path.basename(g) # ③ 마크다운에 표시할 이미지 파일 경로 설정   
-    txt += f'![image]({filename})\n\n' # ③
+    txt += f'![image]({filename})\n\n' 
 
     # 문제 추가
     print(q)
