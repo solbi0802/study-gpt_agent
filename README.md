@@ -2599,7 +2599,7 @@ msft.recommendations # 추천 정보 출력
     ```
     <img width="775" height="777" alt="스크린샷 2025-11-16 오후 5 57 37" src="https://github.com/user-attachments/assets/0cd430a5-b805-493c-8865-99aedc433e55" />
 
-    ### 8장 랭체인을 활용한 에이전트 개발
+### 8장 랭체인을 활용한 에이전트 개발
 
 08-1 랭체인으로 챗봇만들기
 
