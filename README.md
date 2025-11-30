@@ -3813,5 +3813,347 @@ if prompt := st.chat_input():
     ```
 <img width="625" height="421" alt="스크린샷 2025-11-16 오후 11 54 20" src="https://github.com/user-attachments/assets/f8fea529-69ec-4180-a666-36fdc61c3c88" />
 
+### 10장 인터넷 검색을 활용해 답변하는 챗봇 만들기
 
+10-1 인터넷 검색 후 답변하기 - 덕덕고 검색
+
+덕덕고
+
+- 사용자의 데이터를 수집하지 않는다는 메시지를 강력히 내세우는 검색 엔진.
+- 온라인 활동의 프라이버시 보장
+- API 무료 제공
+
+[실습] GPT에 인터넷 검색 기능 추가하기 
+
+```python
+from langchain_openai import ChatOpenAI
+
+model = ChatOpenAI(model="gpt-4o-mini")
+model.invoke("최근 제니가 발표한 신곡은 무엇인가요?")
+
+# AIMessage(content='2023년 10월 기준으로 제니가 발표한 신곡은 "SOLO"입니다. 
+# 그러나 그녀의 최신 활동이나 새로운 곡에 대한 정보는 계속 업데이트되기 때문에, 공식 소셜 미디어나 뉴스에서 확인하는 것이 좋습니다. 
+# 궁금한 점이 있으면 언제든지 물어보세요!
+```
+
+```python
+%pip install -U duckduckgo-search langchain_community  ddgs
+```
+
+```python
+from langchain_community.tools import DuckDuckGoSearchResults 
+
+search = DuckDuckGoSearchResults(results_separator=';\n')
+docs = search.invoke("최근 제니가 발표한 신곡은 무엇인가요?")
+
+print(docs)
+
+# snippet: 최근 즐겨마시는 음료는 무엇인가요 ? Посмотреть перевод. Report copyright infringement., title: Как сказать на Японский? " 최근 즐겨마시는 음료는 무엇인가요 ?", link: https://ru.hinative.com/questions/25138075;
+#snippet: 최근 솔로 앨범 1집 를 발표한 후 어딜가도, 무엇을 틀어도 제니의 모습만 가득하다. 매일 봐도 질리지 않는 제니의 매력은 패션 스타일에서도 빛을 발한다., title: 패션에 진심인 제니가 품절 시킨 대표 패션 아이템은 어디 거? | 하퍼스..., link: https://www.harpersbazaar.co.kr/article/1878402;
+#snippet: О сервисе Прессе Авторские права Связаться с нами Авторам Рекламодателям..., title: 신칸센타고 오사카에서 도쿄ㅣ입국 완화를 발표한 일본! - YouTube, link: https://www.youtube.com/watch?v=5FQCITl2kEk;
+#snippet: 평범한 20대 제니가 올해 해보고 싶은 일은 무엇인가요 ?One of a Kind 월드 투어 중 베를린에서 만난 제니가 자랑하는 당당한 매력., title: 오직 단 하나의 제니 | 보그 코리아 (Vogue Korea), link: https://www.vogue.co.kr/2023/01/17/오직-단-하나의-제니/
+```
+
+```python
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+question_answering_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "사용자의 질문에 대해 아래 context에 기반하여 답변하라.:\n\n{context}",
+        ),
+        MessagesPlaceholder(variable_name="messages"),
+    ]
+)
+
+document_chain = question_answering_prompt | model
+```
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_classic.memory import ConversationBufferMemory
+from langchain_classic.chains import ConversationChain
+
+# LLM 선언
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    temperature=0.3
+)
+
+# 메모리 객체 생성
+memory = ConversationBufferMemory(memory_key="history", return_messages=True)
+
+conversation = ConversationChain(
+llm=llm,
+memory=memory,
+verbose=True
+)
+
+answer = conversation.run("2025년 현대 자동차 전망을 알려줘")
+print(answer)
+print(answer)
+
+#  2025년 현재 정보 알려줌
+```
+
+[실습] 검색 기능에 옵션 설정하기
+
+최신 뉴스 기사만 검색하기
+DuckDuckGoSearchAPIWrapper를 활용해 검색 지역과 기간 설정
+
+```python
+# DuckDuckGo API wrapper를 사용하여 검색할 때 검색 매개변수를 설정하기 위한 클래스 import
+from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
+
+# 한국 지역("kr-kr")을 기준, 최근 일주일("w") 내의 검색 결과를 가져오도록 초기화
+wrapper = DuckDuckGoSearchAPIWrapper(region="kr-kr", time="w")
+```
+
+- w: 최근 일주일
+- m: 1개월
+- d: 하루
+
+```python
+# 검색 기능을 위한 DuckDuckGoSearchResults 초기화
+search = DuckDuckGoSearchResults(
+    api_wrapper=wrapper,      # 앞에서 정의한 API wrapper를 사용
+    source="news",            # 뉴스 소스에서만 검색하도록 지정
+    results_separator=';\n'   # 결과 항목 사이에 구분자 사용 (세미콜론과 줄바꿈)
+)
+```
+
+```python
+# 검색한 뒤 검색 결과를 docs에 저장
+docs = search.invoke("2025년 현대자동차 미국 시장 전망은 어떻게 되나요?")
+
+# 검색 결과 출력
+print(docs)
+
+```
+
+특정 웹 사이트에서 검색하기
+
+```python
+# DuckDuckGo를 이용해 ytn.co.kr 사이트에서 현대자동차 미국 시장 전망에 대한 내용을 검색
+docs = search.invoke("site:ytn.co.kr 2025년 현대자동차 미국 시장 전망은 어떻게 되나요?")
+docs
+
+```
+
+[실습] 기사 링크 가져오기
+
+```python
+# 검색 결과의 링크들을 저장할 빈 리스트 초기화
+links = []
+
+# 검색 결과를 세미콜론과 줄바꿈 기준으로 분리하고, 각 결과 항목에서 링크를 추출
+for doc in docs.split(";\n"):
+    print(doc)  # 각 검색 결과 항목을 출력하여 확인
+    link = doc.split("link:")[1].strip()  # 각 항목에서 'link:' 이후의 URL 부분만 추출
+    links.append(link)  # 추출한 링크를 리스트에 추가
+
+# 모든 링크를 출력
+print(links)
+```
+
+links 리스트를 webBaseLoader의 web_path로 지정하고 각 웹 페이지의 내용을 읽어 옴.
+여러 웹 페이지를 동시에 읽어 오기 위해 비동기 함수 alazy_load() 사용
+
+```python
+# Langchain의 WebBaseLoader를 사용하여 웹 페이지의 내용을 불러옵니다.
+from langchain_community.document_loaders import WebBaseLoader
+
+# WebBaseLoader 객체를 생성. 'links'는 웹 페이지의 URL 목록을 담고 있는 변수
+# bs_get_text_kwargs는 BeautifulSoup의 get_text() 메소드에 전달될 추가 인자
+loader = WebBaseLoader(
+    web_paths=links,  # 웹 페이지의 링크 목록을 지정
+    bs_get_text_kwargs={
+        "strip": True  # 웹 페이지에서 텍스트를 가져올 때 앞뒤의 공백을 제거
+    },
+)
+
+# 비동기로 웹 페이지의 내용을 로드하고, 각 문서를 page_contents 리스트에 추가
+page_contents = []  # 각 웹 페이지의 내용을 저장할 리스트입니다.
+async for doc in loader.alazy_load():
+    page_contents.append(doc)  # 불러온 문서를 page_contents 리스트에 추가
+
+# page_contents에 있는 각 웹 페이지의 내용을 출력
+for content in page_contents:
+    print(content)  # 웹 페이지의 내용을 출력
+    print('--------------')  # 페이지 구분을 위해 구분선을 출력
+```
+
+[실습] 뷰티풀수프를 이용해 특정 영역만 가져오기
+
+- 뷰티풀수프
+    - 파이썬에서 HTML이나 XML문서를 쉽게 파싱할 수 있게 도와주는 라이브러리
+    - 웹 페이지의 구조를 분석하고 특정 태그의 텍스트 등 원하는 요소를 쉽게 추출할 수 있게 해줌
+    - 웹 스크래핑할 때 많이 사용
+
+```python
+import requests
+from bs4 import BeautifulSoup
+
+# 주어진 URL에서 기사 텍스트를 가져오는 함수
+def get_article_text(url):
+    try:
+        # URL에 GET 요청을 보냄
+        response = requests.get(url)
+        # 요청이 성공하지 못하면 예외를 발생시킴
+        response.raise_for_status()
+        
+        # BeautifulSoup을 사용하여 HTML 내용을 파싱
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # 클래스가 'story-news article'인 <article> 태그를 찾음
+        article = soup.find('article', class_='story-news article')
+        
+        # 기사를 찾았다면 그 텍스트를 반환
+        if article:
+            return article.get_text(strip=True)
+        else:
+            try:
+                if soup.find('article'):
+                    return soup.find('article').get_text(strip=True)
+                elif soup.find('div', id="CmAdContent"):
+                    return soup.find('div', id="CmAdContent").get_text(strip=True)
+            except:
+                return "기사 내용을 찾을 수 없습니다."
+            
+    # 요청이 실패할 경우 예외 처리
+    except requests.exceptions.RequestException as e:
+        return f"URL을 가져오는 중 오류 발생: {e}"
+```
+
+```python
+# URL 목록의 각 링크를 반복하면서 기사 텍스트를 출력
+articles = []    # 가져온 내용을 리스트에 담기 위한 변수 선언
+for link in links:
+    print(f"URL: {link}\n")
+    article_text = get_article_text(link)
+    print(f"Content:\n{article_text}")
+    print("--------------------------------------------------")
+    articles.append(article_text)
+```
+
+```python
+chat_history.add_message("\n".join(articles))
+chat_history.add_user_message("2025년 현대자동차 미국 시장 전망은 어떻게 되나요?") 
+
+# 문서 검색하고 답변을 생성
+answer = document_chain.invoke(
+    {
+        "messages": chat_history.messages,
+        "context": docs,
+    }
+)
+
+# 생성된 답변 메모리에 저장
+chat_history.add_ai_message(answer) 
+print(answer)
+
+```
+
+10-2 자료 조사 후 기사 쓰기 - 타빌리 검색
+- 타빌리 검색: 유로 구독 서비스, 안정성 측면에서는 덕덕고보다 좋음.
+
+타빌리 사이트에서 API키 발급 후 env에 저장
+
+```python
+%pip install tavily-python
+```
+
+```python
+from langchain_community.tools import TavilySearchResults
+
+tavily_search = TavilySearchResults(
+    max_results=5
+)
+```
+
+```python
+res = tavily_search.invoke({"query": "2025 한국 경제 전망"})
+for r in res:
+    print(r)
+```
+
+```python
+from IPython.display import JSON
+JSON(res).data
+
+```
+
+TavilyClient를 사용해서 웹페이지 전체 텍스트 불러오기
+
+    include_raw_content=True 해줘야 함!
+
+```python
+from tavily import TavilyClient
+
+client = TavilyClient()
+
+content = client.search(
+    "2025년 한국 경제 전망",  
+    search_depth="advanced",
+    include_raw_content=True,
+)
+
+JSON(content).data
+
+```
+
+[실습] 인터넷에서 자료 조사 후 기사 쓰는 기자 만들기
+
+```python
+from langchain.adapters.openai import convert_openai_messages
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o")
+
+# Step 1. 질문에 대한 자료를 TavilyClient로 가져오기
+query = "현대자동차 미국 시장 2025년 전망"
+
+content = client.search(
+    query, 
+    include_raw_content=True,
+    search_depth="advanced"
+)["results"]
+
+content
+
+```
+
+f-string을 이용해 query와 검색 결과인 context를 넣어서 메시지를 만듦
+
+```python
+# Step 2. 프롬프트 설정
+query = "현대자동차 미국 시장 2025년 전망"
+prompt = [{
+    "role": "system",
+    "content":  (
+        "당신은 신문기사를 쓰는 기자 AI입니다.  \n"
+        "당신은 주어진 정보를 바탕으로 객관적이고 체계적으로 작성된 기사를 써야 합니다. \n"
+    )
+}, {
+    "role": "user",
+    "content": (
+        f'정보: """{content}"""\n\n' 
+        f'위의 정보를 사용하여, 다음 질문에 대해 자세한 보고서를 한국어로 작성하세요: "{query}" \n'
+        '—신문기사 형식을 사용하되, MLA를 준수하는 markdown 문법을 사용해주세요.'
+        '—활용한 자료는 출처를 명시하세요.'
+    )
+    
+}]
+```
+
+```python
+# Step 3. 오픈AI를 랭체인인으로 실행하고 출력
+report = llm.invoke(prompt).content
+print(report)
+```
+
+10-3 유트브 영상 요약하기
+
+10-4 웹과 유튜브 검색을 활용한 챗봇 만들기
     
