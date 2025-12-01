@@ -4156,4 +4156,244 @@ print(report)
 10-3 유트브 영상 요약하기
 
 10-4 웹과 유튜브 검색을 활용한 챗봇 만들기
+
+11-1 딥시크 모델 알아보기
+
+소규모 언어 모델의 등장
+- GPT를 사용하려면 질의할 때마다 토큰 크기에 따른 비용 발생
+- 내 컴퓨터 안에 저장된 자료를 오픈 AI 서버에 전송해야하는 보안 문제
+- 토큰당 부과되는 요금제로 인해 기업, 개인에게 골칫거리였음
+- 이 문제들을 해결하기 위해 일반 PC나 스마트폰에서도 실행할 수 있는 소규모 언어 모델 수요가 늘 있었음
+- LLM을 저사양PC에서도 작동할 수 있도록 경량화한 모델 등장
+
+딥시크-R1 모델
+
+- 딥시크에서 개발한 여러 버전의 언어 모델을 오픈 소스로 공개
+- 일반 PC에서 LLM 실행은 어렵고 LLM을 경량화한 모델들도  함께 공개됨
+
+[실습] 올라마와 딥시크-R1 모델 설치하기
+
+- [올라마(Ollama)](https://ollama.com/download)
+    - 인공지능 모델을 효율적으로 배포/실행하는 오픈소스 프레임워크
+    - 로컬환경에서 언어 모델 쉽게 설치& 실행에 최적화
+
+```python
+ollama run deepseek-r1:8b
+```
+
+경량화된 언어 모델인데도 답변 품질이 꽤 좋지만, 종종 아랍어, 일본어나 태국어를 섞어서 답변한다는 문제점이 있음
+
+11-2 랭체인에서 딥시크 모델 사용하기
+
+```python
+from langchain_ollama import ChatOllama
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+# 모델 초기화
+llm = ChatOllama(model="deepseek-r1:8b") 
+
+messages = [
+    SystemMessage("너는 사용자를 도와주는 상담사야."),
+]
+
+while True:
+    user_input = input("사용자: ")
+
+    if user_input == "exit":
+        break
     
+    messages.append( 
+        HumanMessage(user_input)
+    )  
+    
+    ai_response = llm.invoke(messages)
+    messages.append(
+        ai_response
+    )  
+
+    print("AI: " + ai_response.content)
+
+```
+
+```python
+pip install langchain-ollama
+```
+
+스트림 출력이 되지 않아 결과 받기까지 오래 걸림
+<img width="825" height="443" alt="스크린샷 2025-12-01 오후 10 53 34" src="https://github.com/user-attachments/assets/2ad67680-b4a9-4f9d-ae02-1f13e891847e" />
+
+스트림 방식으로 답변 출력되게 코드 수정
+
+```python
+from langchain_ollama import ChatOllama
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+llm = ChatOllama(model="deepseek-r1:8b") 
+
+messages = [
+    SystemMessage("너는 사용자를 도와주는 상담사야."),
+]
+
+while True:
+    user_input = input("사용자: ")
+
+    if user_input == "exit":
+        break
+    
+    messages.append( 
+        HumanMessage(user_input)
+    )  
+    
+    response = llm.stream(messages) # 스트림 출력
+    # response로 스트림 출력되는 부분을 받아 터미널 창에 차례로 출력
+    ai_message = None
+    for chunk in response:
+        print(chunk.content, end="")
+        if ai_message is None:
+            ai_message = chunk
+        else:
+            ai_message += chunk
+    print('')
+    # 책에서는 </think> 이후만 출력되게 split 처리했는데, 현재는 불필요함
+    message_only = ai_message.content 
+    messages.append(AIMessage(message_only))
+
+    # print("AI: " + response.content)
+
+```
+
+11-3 딥시크에 기반한 RAG 만들기
+
+[실습] 딥시크로 RAG 만들기
+
+```python
+# rag_deepseek.py
+
+import streamlit as st
+from langchain_ollama import ChatOllama
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+import retriever
+
+# 모델 초기화
+llm = ChatOllama(model="deepseek-r1:14b")
+
+# 사용자의 메시지 처리하기 위한 함수
+def get_ai_response(messages, docs):    
+    response = retriever.document_chain.stream({
+        "messages": messages,
+        "context": docs
+    })
+
+    for chunk in response:
+        yield chunk
+
+# Streamlit 앱
+st.title("💬 DeepSeek-R1 Langchain Chat")
+
+# 스트림릿 session_state에 메시지 저장
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [
+        SystemMessage("너는 문서에 기반해 답변하는 도시 정책 전문가야 "),  
+        AIMessage("How can I help you?")
+    ]
+
+# 스트림릿 화면에 메시지 출력
+for msg in st.session_state.messages:
+    if msg.content:
+        if isinstance(msg, SystemMessage):
+            st.chat_message("system").write(msg.content)
+        elif isinstance(msg, AIMessage):
+            st.chat_message("assistant").write(msg.content)
+        elif isinstance(msg, HumanMessage):
+            st.chat_message("user").write(msg.content)
+
+# 사용자 입력 처리
+if prompt := st.chat_input():
+    st.chat_message("user").write(prompt) # 사용자 메시지 출력
+    st.session_state.messages.append(HumanMessage(prompt)) # 사용자 메시지 저장
+
+    augmented_query = retriever.query_augmentation_chain.invoke({
+        "messages": st.session_state["messages"],
+        "query": prompt,
+    })
+    print("augmented_query\t", augmented_query)
+
+    # 관련 문서 검색
+    print("관련 문서 검색")
+    docs = retriever.retriever.invoke(f"{prompt}\n{augmented_query}")
+
+    for doc in docs:
+        print('---------------')
+        print(doc)   
+        with st.expander(f"**문서:** {doc.metadata.get('source', '알 수 없음')}"):
+            # 파일명과 페이지 정보 표시
+            st.write(f"**page:**{doc.metadata.get('page', '')}")
+            st.write(doc.page_content)
+    print("===============")
+
+    with st.spinner(f"AI가 답변을 준비 중입니다... '{augmented_query}'"):
+        response = get_ai_response(st.session_state["messages"], docs)
+        result = st.chat_message("assistant").write_stream(response) # AI 메시지 출력
+    st.session_state["messages"].append(AIMessage(result)) # AI 메시지 저장    
+
+```
+
+```python
+# retriever.py
+# 임베딩 모델 선언하기
+from langchain_openai import OpenAIEmbeddings
+embedding = OpenAIEmbeddings(model='text-embedding-3-large')
+
+# 언어 모델 불러오기
+from langchain_ollama import ChatOllama
+llm = ChatOllama(model="deepseek-r1:14b")
+
+# Load Chroma store
+from langchain_chroma import Chroma
+print("Loading existing Chroma store")
+persist_directory = 'C:/github/gpt_agent_2025_easyspub/chap09/chroma_store'
+
+vectorstore = Chroma(
+    persist_directory=persist_directory, 
+    embedding_function=embedding
+)
+
+# Create retriever
+retriever = vectorstore.as_retriever(k=3)
+
+# Create document chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.output_parsers import StrOutputParser # 문자열 출력 파서를 불러옵니다.
+
+question_answering_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "사용자의 질문에 대해 아래 context에 기반하여 답변하라.:\n\n{context}",
+        ),
+        MessagesPlaceholder(variable_name="messages"),
+    ]
+)
+
+document_chain = create_stuff_documents_chain(llm, question_answering_prompt) | StrOutputParser()
+
+# query augmentation chain
+query_augmentation_prompt = ChatPromptTemplate.from_messages(
+    [
+        MessagesPlaceholder(variable_name="messages"), # 기존 대화 내용
+        (
+            "system",
+            "기존의 대화 내용을 활용하여 사용자의 아래 질문의 의도를 파악하여 명료한 한 문장의 질문으로 변환하라. 대명사나 이, 저, 그와 같은 표현을 명확한 명사로 표현하라. :\n\n{query}",
+        ),
+    ]
+)
+
+query_augmentation_chain = query_augmentation_prompt | llm | StrOutputParser()
+
+```
+
+Q) 랭체인으로 만든 모든 애플리케이션을 GPT가 아닌 딥시크-R1 모델로 변경 가능한 지?
+등장한 지 얼마 안되서 몇 가지 제약이 있음.
+도구 호출하는 기능은 지원 안됨.
+이후 더 나은 모델이 공개됐을 수 있으니, 적절한 모델을 선택해서 활용하길 바람.    
