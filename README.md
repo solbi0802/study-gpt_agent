@@ -4397,3 +4397,77 @@ Q) 랭체인으로 만든 모든 애플리케이션을 GPT가 아닌 딥시크-R
 등장한 지 얼마 안되서 몇 가지 제약이 있음.
 도구 호출하는 기능은 지원 안됨.
 이후 더 나은 모델이 공개됐을 수 있으니, 적절한 모델을 선택해서 활용하길 바람.    
+
+### 12장 랭그래프와 친해지기
+
+12-1 랭그래프로 만드는 기본 챗봇
+
+랭그래프란?
+
+- 랭체인에서 한발 더 나아가 여러 AI 에이전트를 연결하여 상황에 맞게 다음 작업을 하도록 구성할 수 있게 해주는 프레임 워크
+
+랭그래프의 기본 개념 - 노드, 엣지, 상태
+
+- 노드: 하나의 작업이나 단계
+- 엣지: 노드의 연결을 나타내는 화살표
+- 상태: 노드가 작업한 결과를 기록해 두는 작업 일지
+
+![image.png](attachment:1ab9cf83-c4c1-455a-95f8-7a9c88db2c62:image.png)
+
+[실습] 랭그래프로 간단한 챗봇 만들기
+
+```python
+
+// 랭그래프 설치
+%pip install langgraph
+
+// GPT 모델 설정하기
+from langchain_openai import ChatOpenAI
+
+# 모델 초기화
+model = ChatOpenAI(model="gpt-4o-mini")
+model.invoke('안녕하세요!')
+
+```
+
+[실습] 상태 정의하기
+
+- 랭그래프에서 상태는 언어 모델이 임무를 수행하면서 현재 상태를 명확히 관리할 수 있도록 돕는 요소
+
+```python
+from typing import Annotated # annotated는 타입 힌트를 사용할 때 사용하는 함수
+from typing_extensions import TypedDict # TypedDict는 딕셔너리 타입을 정의할 때 사용하는 함수
+
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+
+class State(TypedDict):	# 딕셔너리 형태로 관리
+    """
+    State 클래스는 TypedDict를 상속받습니다.
+
+    속성:
+        messages (Annotated[list[str], add_messages]): 메시지들은 "list" 타입을 가집니다.   #②
+       'add_messages' 함수는 이 상태 키가 어떻게 업데이트되어야 하는지를 정의합니다.  #③
+        (이 경우, 메시지를 덮어쓰는 대신 리스트에 추가합니다)
+    """
+    messages: Annotated[list[str], add_messages]	#②
+
+# StateGraph 클래스를 사용하여 State 타입의 그래프를 생성합니다.
+graph_builder = StateGraph(State) #④
+```
+
+[실습] 노드 생성하기
+
+[실습] 엣지 설정하기
+[실습] 스트림 출력하기
+
+12-2 대화 내용을 저장하는 메모리
+[실습] 랭그래프의 메모리 기능 활용하기
+
+12-3 인터넷 검색 후 기사를 작성하는 챗봇 만들기
+
+[실습] 신문기자 챗봇 만들기
+
+[실습] 라우터 설정하기
+
+[실습] 도구 테스트하고 기사 작성하기
