@@ -4920,3 +4920,3132 @@ for msg, metadata in graph.stream({"messages": inputs}, stream_mode="messages"):
 ```
 
 ### 13장 랭그래프를 활용한 멀티에이전트 RAG 만들기
+13-1 랭그래프 기반 RAG를 위한 사전 작업
+
+멀티에이전트 시스템과 정확한 가이드
+
+- 하나의 AI 에이전트에게 모든 작업을 맡기는 것보다 각각의 AI 에이전트에게 단순한 업무 단위로 명확한 지시를 내려서 워크 플로를 만들면 각 분야의 전문가들이 협업하는 것처럼 시너지를 낼 수 있음
+- 멀티에이전트:  AI 에이전트에게 작업을 분배하고 서로 협력하여 복잡한 작업을 처리하는 시스템
+
+RAG의 한계 개선하기
+
+- 일상적인 질문에도 리트리버를 활용해 관련 문서들을 찾아와서 답변하므로 시간과 토큰 비용 낭비 발생
+- 랭그래프를 이용해서 RAG 사용 여부를 판단해서 필요할 때만 검색하게 함
+
+[실습] PDF 전처리하고 벡터 DB 만들기
+
+```python
+from glob import glob 
+
+for g in glob('../data/*.pdf'):
+    print(g)
+```
+
+```python
+# read_pdf_and_split_text 함수 만들기
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+def read_pdf_and_split_text(pdf_path, chunk_size=1000, chunk_overlap=100):
+    """
+    주어진 PDF 파일을 읽고 텍스트를 분할합니다.
+    매개변수:
+        pdf_path (str): PDF 파일의 경로.
+        chunk_size (int, 선택적): 각 텍스트 청크의 크기. 기본값은 1000입니다.
+        chunk_overlap (int, 선택적): 청크 간의 중첩 크기. 기본값은 100입니다.
+    반환값:
+        list: 분할된 텍스트 청크의 리스트.
+    """
+    print(f"PDF: {pdf_path} -----------------------------")
+
+    pdf_loader = PyPDFLoader(pdf_path)
+    data_from_pdf = pdf_loader.load()
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
+
+    splits = text_splitter.split_documents(data_from_pdf)
+    
+    print(f"Number of splits: {len(splits)}\n")
+    return splits
+
+```
+
+```python
+from langchain_openai import OpenAIEmbeddings
+from langchain_chroma import Chroma
+import os
+
+##### Vectorstore 설정 #####
+embedding = OpenAIEmbeddings(model='text-embedding-3-large')
+
+persist_directory='../chroma_store'
+
+if os.path.exists(persist_directory):
+    print("Loading existing Chroma store")
+    vectorstore = Chroma(
+        persist_directory=persist_directory, 
+        embedding_function=embedding
+    )
+else:
+    print("Creating new Chroma store")
+    
+    vectorstore = None
+    for g in glob('../data/*.pdf'):
+        chunks = read_pdf_and_split_text(g)
+        # 100개씩 나눠서 저장
+        for i in range(0, len(chunks), 100):
+            if vectorstore is None:
+                vectorstore = Chroma.from_documents(
+                    documents=chunks[i:i+100],
+                    embedding=embedding,
+                    persist_directory=persist_directory
+                )
+            else:
+                vectorstore.add_documents(
+                    documents=chunks[i:i+100]
+                )
+
+```
+
+```python
+retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+
+chunks = retriever.invoke("서울 온실가스 저감 계획")
+
+for chunk in chunks:
+    print(chunk.metadata)
+    print(chunk.page_content)
+
+```
+
+```python
+from langchain_openai import ChatOpenAI
+
+# 모델 초기화
+model = ChatOpenAI(model="gpt-4o-mini")
+model.invoke('안녕하세요!')
+```
+
+13-2 라우터 알아보기
+
+라우터
+
+- 입력한 내용에 따라 여러개의 실행 경로 중에서 적절한 경로를 결정해 다음 노드를 선택하는 기능을 함
+- 언어 모델의 응답이나 특정 조건에 따라 다르게 동작해야 할 때 라우터를 사용함
+
+[실습]챗봇에 라우터 설정하기
+
+```python
+# Router 설정
+from langchain_core.prompts import ChatPromptTemplate
+from typing import Literal # 문자열 리터럴 타입을 지원하는 typing 모듈의 클래스
+from pydantic import BaseModel, Field
+
+# Data model
+class RouteQuery(BaseModel):
+    """사용자 쿼리를 가장 관련성이 높은 데이터 소스로 라우팅합니다."""
+    
+    datasource: Literal["vectorstore", "casual_talk"] = Field(
+        ...,
+        description="""
+        사용자 질문에 따라 casual_talk 또는 vectorstore로 라우팅합니다.
+        - casual_talk: 일상 대화를 위한 데이터 소스. 사용자가 일상적인 질문을 할 때 사용합니다.
+        - vectorstore: 사용자 질문에 답하기 위해 RAG로 vectorstore 검색이 필요한 경우 사용합니다.
+        """,
+    )
+```
+
+```python
+# 특정 모델을 structured output (구조화된 출력)과 함께 사용하기 위해 설정
+structured_llm_router = model.with_structured_output(RouteQuery)
+
+router_system = """
+당신은 사용자의 질문을 vectorstore 또는 casual_talk으로 라우팅하는 전문가입니다.
+- vectorstore에는 서울, 뉴욕의 발전계획과 관련된 문서가 포함되어 있습니다. 이 주제에 대한 질문에는 vectorstore를 사용하십시오.
+- 사용자의 질문이 일상 대화에 관련된 경우 casual_talk을 사용하십시오.
+"""
+
+# 시스템 메시지와 사용자의 질문을 포함하는 프롬프트 템플릿 생성
+route_prompt = ChatPromptTemplate.from_messages([
+    ("system", router_system),
+    ("human", "{question}"),
+])
+
+# 라우터 프롬프트와 구조화된 출력 모델을 결합한 객체
+question_router = route_prompt | structured_llm_router
+```
+
+```python
+print(
+    question_router.invoke({
+        "question": "서울 온실가스 저감 계획은 무엇인가요?"
+    })
+)
+
+print(question_router.invoke({"question": "잘 지냈어?"}))
+```
+
+13-3 랭그래프로 RAG 에이전트 만들기
+
+[실습] 관련있는 청크만 필터링하기
+
+```python
+from langchain_core.prompts import PromptTemplate
+
+class GradeDocuments(BaseModel):
+    """검색된 문서가 질문과 관련성 있는지 yes 또는 no로 평가합니다."""
+
+    binary_score: Literal["yes", "no"] = Field(
+        description="문서가 질문과 관련이 있는지 여부를 'yes' 또는 'no'로 평가합니다."
+    )
+
+structured_llm_grader = model.with_structured_output(GradeDocuments)
+```
+
+```python
+grader_prompt = PromptTemplate.from_template("""
+당신은 검색된 문서가 사용자 질문과 관련이 있는지 평가하는 평가자입니다. \n 
+문서에 사용자 질문과 관련된 키워드 또는 의미가 포함되어 있으면, 해당 문서를 관련성이 있다고 평가하십시오. \n
+엄격한 테스트가 필요하지 않습니다. 목표는 잘못된 검색 결과를 걸러내는 것입니다. \n
+문서가 질문과 관련이 있는지 여부를 나타내기 위해 'yes' 또는 'no'로 이진 점수를 부여하십시오.
+                                             
+Retrieved document: \n {document} \n\n 
+User question: {question}
+""")
+
+retrieval_grader = grader_prompt | structured_llm_grader
+question = "서울시 자율주행 관련 계획"
+documents = retriever.invoke(question)
+
+for doc in documents:
+    print(doc)
+```
+
+```python
+# 관련된 청크만 리스트에 추가하기
+filtered_docs = []
+
+for i, doc in enumerate(documents):
+    print(f"Document {i + 1}:")
+    is_relevant = retrieval_grader.invoke({"question": question, "document": doc.page_content})
+    print(is_relevant)
+    print(doc.page_content[:200])
+    print("=================================\n\n")
+
+    if is_relevant.binary_score == "yes":
+        filtered_docs.append(doc)
+
+print(f"Filtered documents: {len(filtered_docs)}")
+```
+
+[실습] RAG 답변 생성하기
+
+```
+### Generate
+# PromptTemplate을 사용하여 RAG를 위한 프롬프트를 생성합니다.
+
+rag_generate_system = """
+너는 사용자의 질문에 대해 주어진 context에 기반하여 답변하는 도시 계획 전문가이다. 
+주어진 context는 vectorstore에서 검색된 결과이다. 
+주어진 context를 기반으로 사용자의 question에 대해 답변하라.
+
+=================================
+question: {question}
+context: {context}
+"""
+
+# PromptTemplate을 생성하여 question과 context를 포맷팅
+rag_prompt = PromptTemplate(
+    input_variables=["question", "context"],
+    template=rag_generate_system
+)
+
+# rag chain
+rag_chain = rag_prompt | model 
+
+# 사용자 질문과 검색된 문서를 입력으로 사용하여 RAG를 실행
+question = "서울시 자율주행 관련 계획"
+
+rag_chain.invoke({"question": question, "context": filtered_docs})
+```
+
+13-4 그래프 정의하기
+
+[실습] 그래프 상태 선언하고 노드 정의하기
+
+```python
+from typing import List
+from typing_extensions import TypedDict
+
+class GraphState(TypedDict):
+    question: str   # 사용자 질문
+    generation: str # LLM 생성 결과
+    documents: List[str] # 검색된 문서
+```
+
+```python
+def route_question(state): 
+    """
+    사용자 질문을 vectorstore 또는 casual_talk로 라우팅합니다.
+    
+    Args:
+        state (dict): 현재 graph state
+
+    return:
+        state (dict): 라우팅된 데이터 소스와 사용자 질문을 포함하는 새로운 graph state
+    """
+    print('------ROUTE------')
+    question = state['question']
+    route = question_router.invoke({"question": question})
+
+    
+    print(f"---Routing to {route.datasource}---")
+    return route.datasource 
+```
+
+```python
+def retrieve(state): 
+    """
+    vectorstore에서 질문에 대한 문서를 검색합니다.
+    
+    Args:
+        state (dict): 현재 graph state
+
+    return:
+        state (dict): 검색된 문서와 사용자 질문을 포함하는 새로운 graph state
+    """
+    print('------RETRIEVE------')
+    question = state['question']
+
+    # Retrieve documents
+    documents = retriever.invoke(question)
+    return {"documents": documents, "question": question}
+```
+
+```python
+def grade_documents(state):
+    """
+    검색된 문서를 평가하여 질문과 관련성이 있는지 확인합니다.
+
+    Args:
+        state (dict): 현재 graph state
+
+    return:
+        state (dict): 관련성이 있는 문서와 사용자 질문을 포함하는 새로운 graph state
+    """
+    print('------GRADE------')
+    question = state['question']
+    documents = state['documents']
+    filtered_docs = []
+
+    for i, doc in enumerate(documents):
+        is_relevant = retrieval_grader.invoke({"question": question, "document": doc.page_content})
+        if is_relevant.binary_score == "yes":
+            filtered_docs.append(doc)
+    return {"documents": filtered_docs, "question": question}  
+```
+
+```python
+def generate(state):
+    """
+    LLM을 사용하여 문서와 사용자 질문에 대한 답변을 생성합니다.
+
+    Args:
+        state (dict): 현재 graph state
+
+    return:
+        state (dict): LLM 생성 결과와 사용자 질문을 포함하는 새로운 graph state
+    """
+    print('------GENERATE------')
+    question = state['question']
+    documents = state['documents']
+    generation = rag_chain.invoke({"question": question, "context": documents})
+    return {
+        "documents": documents,
+        "question": question,
+        "generation": generation
+    }
+```
+
+```python
+def casual_talk(state):
+    """
+    일상 대화를 위한 답변을 생성합니다.
+
+    Args:
+        state (dict): 현재 graph state
+
+    return:
+        state (dict): 일상 대화 결과와 사용자 질문을 포함하는 새로운 graph state
+    """
+    print('------CASUAL TALK------')
+    question = state['question']
+    generation = model.invoke(question)
+    return {
+        "question": question,
+        "generation": generation
+    }
+```
+
+[실습] StateGraph 만들기
+
+```python
+from langgraph.graph import START, StateGraph, END
+
+workflow = StateGraph(GraphState)
+```
+
+```python
+# 노드를 정의 
+workflow.add_node("retrieve", retrieve)
+workflow.add_node("grade_documents", grade_documents)
+workflow.add_node("generate", generate)
+workflow.add_node("casual_talk", casual_talk)
+```
+
+```python
+# graph를 정의
+workflow.add_conditional_edges(
+    START, 
+    route_question,
+    {
+        "vectorstore": "retrieve",
+        "casual_talk": "casual_talk"
+    }
+)
+workflow.add_edge("casual_talk", END)
+workflow.add_edge("retrieve", "grade_documents")
+workflow.add_edge("grade_documents", "generate")
+workflow.add_edge("generate", END)
+
+app = workflow.compile() # workflow를 컴파일
+```
+
+```python
+from IPython.display import Image, display
+
+try:
+    display(Image(app.get_graph().draw_mermaid_png()))
+except Exception:
+    #  실패 시 통과
+    pass
+
+```
+
+[실습] 멀티에이전트 테스트하기
+
+```python
+inputs = {
+    "question": "서울시 자율주행 계획"
+}
+
+app.invoke(inputs) # workflow를 실행합니다.
+```
+
+```python
+inputs = {
+    "question": "잘 지내고 있어?"
+}
+
+app.invoke(inputs) # workflow를 실행합니다.
+```
+
+```python
+inputs = {
+    "question": "서울시의 자율주행 차량 관련 계획은 무엇이 있나요?"
+}
+
+for msg, meta in app.stream(inputs, stream_mode='messages'):
+    print(msg.content, end='')
+
+```
+
+### 14장 랭그래프로 목차를 작성하는 멀티에이전트 만들기
+14-1 사용자와 함께 목차를 작성하는 에이전트
+
+사용자와 의사소통하는 커뮤니케이터 에이전트
+
+- 사용자와 단순한 대화를 할 수 있는 커뮤니케이터 에이전트 만들기
+<img width="146" height="234" alt="book_writer_0" src="https://github.com/user-attachments/assets/3ce492c9-24de-472b-bfad-7d75143d8a75" />
+[실습] 커뮤니케이터 에이전트 communicator 만들기
+
+```python
+#book_writer_0.py
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage
+from langchain_core.prompts import PromptTemplate
+from typing_extensions import TypedDict
+from typing import List
+
+from utils import save_state 
+
+from datetime import datetime
+import os 
+
+# 현재 폴더 경로 찾기
+# 랭그래프 이미지로 저장 및 추후 작업 결과 파일 저장 경로로 활용
+filename = os.path.basename(__file__) # 현재 파일명 반환
+absolute_path = os.path.abspath(__file__) # 현재 파일의 절대 경로 반환
+current_path = os.path.dirname(absolute_path) # 현재 .py 파일이 있는 폴더 경로 
+
+# 모델 초기화
+llm = ChatOpenAI(model="gpt-4o") 
+
+# 상태 정의
+class State(TypedDict):
+    messages: List[AnyMessage | str] # 여러 종류의 메시지 타입(AIMessage, HumanMessage..etc) 을 하나로 통합하여 표현하기 위해 사용되는 타입 별칭
+
+# 사용자와 대화할 노드(agent): communicator
+def communicator(state: State):
+    print("\n\n============ COMMUNICATOR ============")
+
+    # 시스템 프롬프트 정의
+    communicator_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 커뮤니케이터로서, 
+        AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다. 
+
+        messages: {messages}
+        """
+    )
+
+    #② 시스템 프롬프트와 모델을 연결
+    system_chain = communicator_system_prompt | llm
+
+    # 상태에서 메시지를 가져옴
+    messages = state["messages"]
+
+    # 입력값 정의
+    inputs = {"messages": messages}
+
+    # 스트림되는 메시지를 출력하면서, gathered에 모으기
+    gathered = None
+
+    print('\nAI\t: ', end='')
+    for chunk in system_chain.stream(inputs):
+        print(chunk.content, end='')
+
+        if gathered is None:
+            gathered = chunk
+        else:
+            gathered += chunk
+
+    messages.append(gathered)
+
+    return {"messages": messages}
+
+# 상태 그래프 정의
+graph_builder = StateGraph(State)
+
+# Nodes
+graph_builder.add_node("communicator", communicator)
+
+# Edges
+graph_builder.add_edge(START, "communicator")
+graph_builder.add_edge("communicator", END)
+
+graph = graph_builder.compile()
+
+graph.get_graph().draw_mermaid_png(output_file_path=absolute_path.replace('.py', '.png'))
+
+# 상태 초기화
+state = State(
+    messages = [
+        SystemMessage(
+                f"""
+            너희 AI들은 사용자의 요구에 맞는 책을 쓰는 작가팀이다.
+            사용자가 사용하는 언어로 대화하라.
+
+            현재시각은 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}이다.
+
+            """
+        )
+    ],
+)
+
+while True:
+    user_input = input("\nUser\t: ").strip()
+
+    if user_input.lower() in ['exit', 'quit', 'q']:
+        print("Goodbye!")
+        break
+    
+    state["messages"].append(HumanMessage(user_input))
+    state = graph.invoke(state)
+
+    print('\n------------------------------------ MESSAGE COUNT\t', len(state["messages"]))
+
+    save_state(current_path, state) # 현재 state 내용 저장
+
+```
+
+```python
+#utils_0.py
+import os
+import json
+
+def save_state(current_path, state):
+    if not os.path.exists(f"{current_path}/data"):
+        os.makedirs(f"{current_path}/data")
+    
+    state_dict = {}
+
+    messages = [(m.__class__.__name__, m.content) for m in state["messages"]]
+    state_dict["messages"] = messages
+    
+    with open(f"{current_path}/data/state.json", "w", encoding='utf-8') as f:
+        json.dump(state_dict, f, indent=4, ensure_ascii=False)
+
+```
+
+책의 목차를 작성하는 콘텐츠 전략가 에이전트
+
+[실습] 목차를 작성하는 콘텐츠 전략가 에이전트 content_strategist 만들기
+
+```python
+# book_writer.py
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage, AIMessage
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers.string import StrOutputParser
+from typing_extensions import TypedDict
+from typing import List
+
+from utils import save_state, get_outline, save_outline 
+
+from datetime import datetime
+import os 
+
+# 현재 폴더 경로 찾기
+# 랭그래프 이미지로 저장 및 추후 작업 결과 파일 저장 경로로 활용
+filename = os.path.basename(__file__) # 현재 파일명 반환
+absolute_path = os.path.abspath(__file__) # 현재 파일의 절대 경로 반환
+current_path = os.path.dirname(absolute_path) # 현재 .py 파일이 있는 폴더 경로 
+
+# 모델 초기화
+llm = ChatOpenAI(model="gpt-4o") 
+
+# 상태 정의
+class State(TypedDict):
+    messages: List[AnyMessage | str]
+
+# 목차를 작성하는 노드(agent)
+def content_strategist(state: State):
+    print("\n\n============ CONTENT STRATEGIST ============")
+
+    # 시스템 프롬프트 정의
+    content_strategist_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 콘텐츠 전략가(Content Strategist)로서,
+        이전 대화 내용을 바탕으로 사용자의 요구사항을 분석하고, AI팀이 쓸 책의 세부 목차를 결정한다.
+
+        지난 목차가 있다면 그 버전을 사용자의 요구에 맞게 수정하고, 없다면 새로운 목차를 제안한다.
+
+        --------------------------------
+        - 지난 목차: {outline}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        """
+    )
+
+    # 시스템 프롬프트와 모델을 연결
+    content_strategist_chain = content_strategist_system_prompt | llm | StrOutputParser()
+
+    messages = state["messages"]        # 상태에서 메시지를 가져옴
+    outline = get_outline(current_path) # 저장된 목차를 가져옴
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": outline
+    }
+
+    # 목차 작성
+    gathered = ''
+    for chunk in content_strategist_chain.stream(inputs):
+        gathered += chunk
+        print(chunk, end='')
+
+    print()
+
+    save_outline(current_path, gathered) # 목차 저장
+
+    # 메시지 추가    
+    content_strategist_message = f"[Content Strategist] 목차 작성 완료"
+    print(content_strategist_message)
+    messages.append(AIMessage(content_strategist_message))
+
+    return {"messages": messages} # 메시지 업데이트
+
+# 사용자와 대화할 노드(agent): communicator
+def communicator(state: State):
+    print("\n\n============ COMMUNICATOR ============")
+
+    # 시스템 프롬프트 정의
+    communicator_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 커뮤니케이터로서, 
+        AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다. 
+
+        사용자도 outline(목차)을 이미 보고 있으므로, 다시 출력할 필요는 없다.
+
+        messages: {messages}
+        """
+    )
+
+    #② 시스템 프롬프트와 모델을 연결
+    system_chain = communicator_system_prompt | llm
+
+    # 상태에서 메시지를 가져옴
+    messages = state["messages"]
+
+    # 입력값 정의
+    inputs = {"messages": messages}
+
+    # 스트림되는 메시지를 출력하면서, gathered에 모으기
+    gathered = None
+
+    print('\nAI\t: ', end='')
+    for chunk in system_chain.stream(inputs):
+        print(chunk.content, end='')
+
+        if gathered is None:
+            gathered = chunk
+        else:
+            gathered += chunk
+
+    messages.append(gathered)
+
+    return {"messages": messages}
+
+# 상태 그래프 정의
+graph_builder = StateGraph(State)
+
+# Nodes
+graph_builder.add_node("communicator", communicator)
+graph_builder.add_node("content_strategist", content_strategist)
+
+# Edges
+graph_builder.add_edge(START, "content_strategist") # edge 변경 및 추가
+graph_builder.add_edge("content_strategist", "communicator")  # edge변경 및 추가
+graph_builder.add_edge("communicator", END)
+
+graph = graph_builder.compile()
+
+graph.get_graph().draw_mermaid_png(output_file_path=absolute_path.replace('.py', '.png'))
+
+# 상태 초기화
+state = State(
+    messages = [
+        SystemMessage(
+                f"""
+            너희 AI들은 사용자의 요구에 맞는 책을 쓰는 작가팀이다.
+            사용자가 사용하는 언어로 대화하라.
+
+            현재시각은 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}이다.
+
+            """
+        )
+    ],
+)
+
+while True:
+    user_input = input("\nUser\t: ").strip()
+
+    if user_input.lower() in ['exit', 'quit', 'q']:
+        print("Goodbye!")
+        break
+    
+    state["messages"].append(HumanMessage(user_input))
+    state = graph.invoke(state)
+
+    print('\n------------------------------------ MESSAGE COUNT\t', len(state["messages"]))
+
+    save_state(current_path, state) # 현재 state 내용 저장
+
+```
+
+```python
+#utils.py
+import os
+import json
+
+def save_state(current_path, state):
+    if not os.path.exists(f"{current_path}/data"):
+        os.makedirs(f"{current_path}/data")
+    
+    state_dict = {}
+
+    messages = [(m.__class__.__name__, m.content) for m in state["messages"]]
+    state_dict["messages"] = messages
+    
+    with open(f"{current_path}/data/state.json", "w", encoding='utf-8') as f:
+        json.dump(state_dict, f, indent=4, ensure_ascii=False)
+
+def get_outline(current_path):
+    outline = '아직 작성된 목차가 없습니다.'
+
+    if os.path.exists(f"{current_path}/data/outline.md"):
+        with open(f"{current_path}/data/outline.md", "r", encoding='utf-8') as f:
+            outline = f.read()  
+    return outline
+
+def save_outline(current_path, outline):
+    if not os.path.exists(f"{current_path}/data"):
+        os.makedirs(f"{current_path}/data")
+    
+    with open(f"{current_path}/data/outline.md", "w", encoding='utf-8') as f:
+        f.write(outline)
+    return outline
+
+```
+
+14-2 조장 역할을 하는 슈퍼바이저 에이전트
+
+슈퍼바이저 에이전트 
+사용자가 입력한 내용을 분석해 목차를 작성하는 콘텐츠 에이전트가 필요할 지, 아니면 사용자와 소통하는 에이전트가 필요할 지 판단하는 조장이 필요
+
+![book_writer_2.png](attachment:f1628cd1-c5b9-4e6b-bc1c-a8262753cb34:book_writer_2.png)
+
+[실습] 슈퍼바이저 에이전트 supervisor 추가하기
+
+```python
+#boook_writer_2.py
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage, AIMessage
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers.string import StrOutputParser
+from typing_extensions import TypedDict
+from typing import List
+
+from utils import save_state, get_outline, save_outline 
+
+from datetime import datetime
+import os 
+
+# 현재 폴더 경로 찾기
+# 랭그래프 이미지로 저장 및 추후 작업 결과 파일 저장 경로로 활용
+filename = os.path.basename(__file__) # 현재 파일명 반환
+absolute_path = os.path.abspath(__file__) # 현재 파일의 절대 경로 반환
+current_path = os.path.dirname(absolute_path) # 현재 .py 파일이 있는 폴더 경로 
+
+# 모델 초기화
+llm = ChatOpenAI(model="gpt-4o") 
+
+# 상태 정의
+class State(TypedDict):
+    messages: List[AnyMessage | str]
+    task: str # 상태를 다른 AI 에이전트들과 공유
+
+def supervisor(state: State): # supervisor 에이전트 추가
+    print("\n\n============ SUPERVISOR ============")
+
+    # 시스템 프롬프트 정의
+    supervisor_system_prompt = PromptTemplate.from_template(
+        """
+        너는 AI 팀의 supervisor로서 AI 팀의 작업을 관리하고 지도한다.
+        사용자가 원하는 책을 써야 한다는 최종 목표를 염두에 두고, 
+        사용자의 요구를 달성하기 위해 현재 해야할 일이 무엇인지 결정한다.
+
+        supervisor가 활용할 수 있는 agent는 다음과 같다.     
+        - content_strategist: 사용자의 요구사항이 명확해졌을 때 사용한다. AI 팀의 콘텐츠 전략을 결정하고, 전체 책의 목차(outline)를 작성한다. 
+        - communicator: AI 팀에서 해야 할 일을 스스로 판단할 수 없을 때 사용한다. 사용자에게 진행상황을 사용자에게 보고하고, 다음 지시를 물어본다. 
+
+        아래 내용을 고려하여, 현재 해야할 일이 무엇인지, 사용할 수 있는 agent를 단답으로 말하라.
+
+        ------------------------------------------
+        previous_outline: {outline}
+        ------------------------------------------
+        messages:
+        {messages}
+        """
+    )
+
+    # 체인 연결
+    supervisor_chain = supervisor_system_prompt | llm | StrOutputParser()	#④
+
+    # 메시지 가져오기
+    messages = state.get("messages", [])		#⑤
+
+    # inputs 설정
+    inputs = {
+        "messages": messages,
+        "outline": get_outline(current_path)
+    }
+
+    # task 문자열로 생성
+    task = supervisor_chain.invoke(inputs) 	#⑦
+   
+    # 메시지 추가
+    supervisor_message = AIMessage(f"[Supervisor] {task}")
+    messages.append(supervisor_message)
+    print(supervisor_message.content)
+
+    # state 업데이트
+    return {
+        "messages": messages, 
+        "task": task
+    }
+
+# supervisor's route
+def supervisor_router(state: State):
+    task = state['task']
+    return task
+
+# 목차를 작성하는 노드(agent)
+def content_strategist(state: State):
+    print("\n\n============ CONTENT STRATEGIST ============")
+
+    # 시스템 프롬프트 정의
+    content_strategist_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 콘텐츠 전략가(Content Strategist)로서,
+        이전 대화 내용을 바탕으로 사용자의 요구사항을 분석하고, AI팀이 쓸 책의 세부 목차를 결정한다.
+
+        지난 목차가 있다면 그 버전을 사용자의 요구에 맞게 수정하고, 없다면 새로운 목차를 제안한다.
+
+        --------------------------------
+        - 지난 목차: {outline}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        """
+    )
+
+    # 시스템 프롬프트와 모델을 연결
+    content_strategist_chain = content_strategist_system_prompt | llm | StrOutputParser()
+
+    messages = state["messages"]        # 상태에서 메시지를 가져옴
+    outline = get_outline(current_path) # 저장된 목차를 가져옴
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": outline
+    }
+
+    # 목차 작성
+    gathered = ''
+    for chunk in content_strategist_chain.stream(inputs):
+        gathered += chunk
+        print(chunk, end='')
+
+    print()
+
+    save_outline(current_path, gathered) # 목차 저장
+
+    # 메시지 추가    
+    content_strategist_message = f"[Content Strategist] 목차 작성 완료"
+    print(content_strategist_message)
+    messages.append(AIMessage(content_strategist_message))
+
+    return {"messages": messages} # 메시지 업데이트
+
+# 사용자와 대화할 노드(agent): communicator
+def communicator(state: State):
+    print("\n\n============ COMMUNICATOR ============")
+
+    # 시스템 프롬프트 정의
+    communicator_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 커뮤니케이터로서, 
+        AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다. 
+
+        사용자도 outline(목차)을 이미 보고 있으므로, 다시 출력할 필요는 없다.
+
+        messages: {messages}
+        """
+    )
+
+    #② 시스템 프롬프트와 모델을 연결
+    system_chain = communicator_system_prompt | llm
+
+    # 상태에서 메시지를 가져옴
+    messages = state["messages"]
+
+    # 입력값 정의
+    inputs = {"messages": messages}
+
+    # 스트림되는 메시지를 출력하면서, gathered에 모으기
+    gathered = None
+
+    print('\nAI\t: ', end='')
+    for chunk in system_chain.stream(inputs):
+        print(chunk.content, end='')
+
+        if gathered is None:
+            gathered = chunk
+        else:
+            gathered += chunk
+
+    messages.append(gathered)
+
+    return {"messages": messages}
+
+# 상태 그래프 정의
+graph_builder = StateGraph(State)
+
+# Nodes
+graph_builder.add_node("supervisor", supervisor)     
+graph_builder.add_node("communicator", communicator)
+graph_builder.add_node("content_strategist", content_strategist)
+
+# Edges
+graph_builder.add_edge(START, "supervisor")
+graph_builder.add_conditional_edges(
+    "supervisor", 
+    supervisor_router,
+    {
+        "content_strategist": "content_strategist",
+        "communicator": "communicator"
+    }
+)
+graph_builder.add_edge("content_strategist", "communicator")
+graph_builder.add_edge("communicator", END)
+
+graph = graph_builder.compile()
+
+graph.get_graph().draw_mermaid_png(output_file_path=absolute_path.replace('.py', '.png'))
+
+# 상태 초기화
+state = State(
+    messages = [
+        SystemMessage(
+                f"""
+            너희 AI들은 사용자의 요구에 맞는 책을 쓰는 작가팀이다.
+            사용자가 사용하는 언어로 대화하라.
+
+            현재시각은 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}이다.
+
+            """
+        )
+    ],
+    task=""
+)
+
+while True:
+    user_input = input("\nUser\t: ").strip()
+
+    if user_input.lower() in ['exit', 'quit', 'q']:
+        print("Goodbye!")
+        break
+    
+    state["messages"].append(HumanMessage(user_input))
+    state = graph.invoke(state)
+
+    print('\n------------------------------------ MESSAGE COUNT\t', len(state["messages"]))
+
+    save_state(current_path, state) # 현재 state 내용 저장
+
+```
+
+```python
+#utils.py
+import os
+import json
+
+def save_state(current_path, state):
+    if not os.path.exists(f"{current_path}/data"):
+        os.makedirs(f"{current_path}/data")
+    
+    state_dict = {}
+
+    messages = [(m.__class__.__name__, m.content) for m in state["messages"]]
+    state_dict["messages"] = messages
+    state_dict["task_history"] = [task.to_dict() for task in state.get("task_history", [])]
+    
+    with open(f"{current_path}/data/state.json", "w", encoding='utf-8') as f:
+        json.dump(state_dict, f, indent=4, ensure_ascii=False)
+
+def get_outline(current_path):
+    outline = '아직 작성된 목차가 없습니다.'
+
+    if os.path.exists(f"{current_path}/data/outline.md"):
+        with open(f"{current_path}/data/outline.md", "r", encoding='utf-8') as f:
+            outline = f.read()  
+    return outline
+
+def save_outline(current_path, outline):
+    if not os.path.exists(f"{current_path}/data"):
+        os.makedirs(f"{current_path}/data")
+    
+    with open(f"{current_path}/data/outline.md", "w", encoding='utf-8') as f:
+        f.write(outline)
+    return outline
+
+```
+
+[실습] 파이단틱의 BaseModel로 출력 형태 정의하기
+
+- 불필요한 문장까지 출력되는 문제 개선을 위해 파이단틱의 BaseModel 활용
+
+```python
+# models.py
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class Task(BaseModel):
+    agent: Literal[
+        "content_strategist",
+        "communicator",
+    ] = Field(
+        ...,
+        description="""
+        작업을 수행하는 agent의 종류.
+        - content_strategist: 콘텐츠 전략을 수립하는 작업을 수행한다. 사용자의 요구사항이 명확해졌을 때 사용한다. AI 팀의 콘텐츠 전략을 결정하고, 전체 책의 목차(outline)를 작성한다. 
+        - communicator: AI 팀에서 해야 할 일을 스스로 판단할 수 없을 때 사용한다. 사용자에게 진행상황을 사용자에게 보고하고, 다음 지시를 물어본다.
+        """
+    )
+	
+    done: bool = Field(..., description="종료 여부")
+    description: str = Field(..., description="어떤 작업을 해야 하는지에 대한 설명")
+	
+    done_at: str = Field(..., description="할 일이 완료된 날짜와 시간")
+	
+    def to_dict(self):
+        return {
+            "agent": self.agent,
+            "done": self.done,
+            "description": self.description,
+            "done_at": self.done_at
+        }  
+
+```
+
+```python
+#book_writer_3.py
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage, AIMessage
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers.string import StrOutputParser
+from typing_extensions import TypedDict
+from typing import List
+
+from utils import save_state, get_outline, save_outline 
+from models import Task # models.py 파일의 Task import
+from datetime import datetime
+import os 
+
+# 현재 폴더 경로 찾기
+# 랭그래프 이미지로 저장 및 추후 작업 결과 파일 저장 경로로 활용
+filename = os.path.basename(__file__) # 현재 파일명 반환
+absolute_path = os.path.abspath(__file__) # 현재 파일의 절대 경로 반환
+current_path = os.path.dirname(absolute_path) # 현재 .py 파일이 있는 폴더 경로 
+
+# 모델 초기화
+llm = ChatOpenAI(model="gpt-4o") 
+
+# 상태 정의
+class State(TypedDict):
+    messages: List[AnyMessage | str]
+    task_history: List[Task]    
+
+def supervisor(state: State): # supervisor 에이전트 추가
+    print("\n\n============ SUPERVISOR ============")
+
+    # 시스템 프롬프트 정의
+    supervisor_system_prompt = PromptTemplate.from_template(
+        """
+        너는 AI 팀의 supervisor로서 AI 팀의 작업을 관리하고 지도한다.
+        사용자가 원하는 책을 써야 한다는 최종 목표를 염두에 두고, 
+        사용자의 요구를 달성하기 위해 현재 해야할 일이 무엇인지 결정한다.
+
+        supervisor가 활용할 수 있는 agent는 다음과 같다.     
+        - content_strategist: 사용자의 요구사항이 명확해졌을 때 사용한다. AI 팀의 콘텐츠 전략을 결정하고, 전체 책의 목차(outline)를 작성한다. 
+        - communicator: AI 팀에서 해야 할 일을 스스로 판단할 수 없을 때 사용한다. 사용자에게 진행상황을 사용자에게 보고하고, 다음 지시를 물어본다. 
+
+        아래 내용을 고려하여, 현재 해야할 일이 무엇인지, 사용할 수 있는 agent를 단답으로 말하라.
+
+        ------------------------------------------
+        previous_outline: {outline}
+        ------------------------------------------
+        messages:
+        {messages}
+        """
+    )
+
+    # 체인 연결
+    supervisor_chain = supervisor_system_prompt | llm. with_structured_output(Task)    
+
+    # 메시지 가져오기
+    messages = state.get("messages", [])		#⑤
+
+    # inputs 설정
+    inputs = {
+        "messages": messages,
+        "outline": get_outline(current_path)
+    }
+
+    # task 문자열로 생성
+    task = supervisor_chain.invoke(inputs) 	#⑦
+    task_history = state.get("task_history", [])    # 작업 이력 가져오기
+    task_history.append(task)                    	# 작업 이력에 추가
+
+   
+    # 메시지 추가
+    supervisor_message = AIMessage(f"[Supervisor] {task}")
+    messages.append(supervisor_message)
+    print(supervisor_message.content)
+
+    # state 업데이트
+    return {
+        "messages": messages, 
+        "task_history": task_history
+    }
+
+# supervisor's route
+def supervisor_router(state: State):
+    task = state['task_history'][-1]
+    return task.agent			
+
+# 목차를 작성하는 노드(agent)
+def content_strategist(state: State):
+    print("\n\n============ CONTENT STRATEGIST ============")
+
+    # 시스템 프롬프트 정의
+    content_strategist_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 콘텐츠 전략가(Content Strategist)로서,
+        이전 대화 내용을 바탕으로 사용자의 요구사항을 분석하고, AI팀이 쓸 책의 세부 목차를 결정한다.
+
+        지난 목차가 있다면 그 버전을 사용자의 요구에 맞게 수정하고, 없다면 새로운 목차를 제안한다.
+
+        --------------------------------
+        - 지난 목차: {outline}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        """
+    )
+
+    # 시스템 프롬프트와 모델을 연결
+    content_strategist_chain = content_strategist_system_prompt | llm | StrOutputParser()
+
+    messages = state["messages"]        # 상태에서 메시지를 가져옴
+    outline = get_outline(current_path) # 저장된 목차를 가져옴
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": outline
+    }
+
+    # 목차 작성
+    gathered = ''
+    for chunk in content_strategist_chain.stream(inputs):
+        gathered += chunk
+        print(chunk, end='')
+
+    print()
+
+    save_outline(current_path, gathered) # 목차 저장
+
+    # 메시지 추가    
+    content_strategist_message = f"[Content Strategist] 목차 작성 완료"
+    print(content_strategist_message)
+    messages.append(AIMessage(content_strategist_message))
+
+    task_history = state.get("task_history", []) # task_history 가져오기
+    # 최근 task 작업완료(done) 처리하기
+    if task_history[-1].agent != "content_strategist": 
+        raise ValueError(f"Content Strategist가 아닌 agent가 목차 작성을 시도하고 있습니다.\n {task_history[-1]}")
+    
+    task_history[-1].done = True
+    task_history[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 다음 작업이 communicator로 사용자와 대화하는 것이므로 새 작업 추가 
+    new_task = Task(
+        agent="communicator",
+        done=False,
+        description="AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다",
+        done_at=""
+    )
+    task_history.append(new_task)
+
+    print(new_task)
+
+    # 현재 state를 업데이트한다. 
+    return {
+        "messages": messages,
+        "task_history": task_history
+    }
+
+# 사용자와 대화할 노드(agent): communicator
+def communicator(state: State):
+    print("\n\n============ COMMUNICATOR ============")
+
+    # 시스템 프롬프트 정의
+    communicator_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 커뮤니케이터로서, 
+        AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다. 
+
+        사용자도 outline(목차)을 이미 보고 있으므로, 다시 출력할 필요는 없다.
+        outline: {outline} 
+        --------------------------------
+        messages: {messages}
+        """
+    )
+
+    #② 시스템 프롬프트와 모델을 연결
+    system_chain = communicator_system_prompt | llm
+
+    # 상태에서 메시지를 가져옴
+    messages = state["messages"]
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": get_outline(current_path)
+    }
+
+    # 스트림되는 메시지를 출력하면서, gathered에 모으기
+    gathered = None
+
+    print('\nAI\t: ', end='')
+    for chunk in system_chain.stream(inputs):
+        print(chunk.content, end='')
+
+        if gathered is None:
+            gathered = chunk
+        else:
+            gathered += chunk
+
+    messages.append(gathered)
+
+    task_history = state.get("task_history", []) 
+    if task_history[-1].agent != "communicator":
+        raise ValueError(f"Communicator가 아닌 agent가 대화를 시도하고 있습니다.\n {task_history[-1]}")
+    
+    task_history[-1].done = True
+    task_history[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    return {
+        "messages": messages,
+        "task_history": task_history
+    }
+
+# 상태 그래프 정의
+graph_builder = StateGraph(State)
+
+# Nodes
+graph_builder.add_node("supervisor", supervisor)     
+graph_builder.add_node("communicator", communicator)
+graph_builder.add_node("content_strategist", content_strategist)
+
+# Edges
+graph_builder.add_edge(START, "supervisor")
+graph_builder.add_conditional_edges(
+    "supervisor", 
+    supervisor_router,
+    {
+        "content_strategist": "content_strategist",
+        "communicator": "communicator"
+    }
+)
+graph_builder.add_edge("content_strategist", "communicator")
+graph_builder.add_edge("communicator", END)
+
+graph = graph_builder.compile()
+
+graph.get_graph().draw_mermaid_png(output_file_path=absolute_path.replace('.py', '.png'))
+
+# 상태 초기화
+state = State(
+    messages = [
+        SystemMessage(
+                f"""
+            너희 AI들은 사용자의 요구에 맞는 책을 쓰는 작가팀이다.
+            사용자가 사용하는 언어로 대화하라.
+
+            현재시각은 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}이다.
+
+            """
+        )
+    ],
+    task_history=[]
+)
+
+while True:
+    user_input = input("\nUser\t: ").strip()
+
+    if user_input.lower() in ['exit', 'quit', 'q']:
+        print("Goodbye!")
+        break
+    state["messages"].append(HumanMessage(user_input))
+    state = graph.invoke(state)
+
+    print('\n------------------------------------ MESSAGE COUNT\t', len(state["messages"]))
+
+    save_state(current_path, state) # 현재 state 내용 저장
+
+```
+
+```python
+#utils_3.py
+import os
+import json
+
+def save_state(current_path, state):
+    if not os.path.exists(f"{current_path}/data"):
+        os.makedirs(f"{current_path}/data")
+    
+    state_dict = {}
+
+    messages = [(m.__class__.__name__, m.content) for m in state["messages"]]
+    state_dict["messages"] = messages
+    state_dict["task_history"] = [task.to_dict() for task in state.get("task_history", [])]
+    
+    with open(f"{current_path}/data/state.json", "w", encoding='utf-8') as f:
+        json.dump(state_dict, f, indent=4, ensure_ascii=False)
+
+def get_outline(current_path):
+    outline = '아직 작성된 목차가 없습니다.'
+
+    if os.path.exists(f"{current_path}/data/outline.md"):
+        with open(f"{current_path}/data/outline.md", "r", encoding='utf-8') as f:
+            outline = f.read()  
+    return outline
+
+def save_outline(current_path, outline):
+    if not os.path.exists(f"{current_path}/data"):
+        os.makedirs(f"{current_path}/data")
+    
+    with open(f"{current_path}/data/outline.md", "w", encoding='utf-8') as f:
+        f.write(outline)
+    return outline
+
+```
+
+14-3 웹 검색과 RAG를 활용하는 벡터 검색 에이전트
+
+[실습] 웹 검색 기능 만들기
+
+webBaseLoader로 페이지 전문 읽어오기
+
+```python
+# 웹 검색을 위한 타빌리 검색 함수 만들기
+from tavily import TavilyClient
+from langchain_core.tools import tool
+from langchain_community.document_loaders import WebBaseLoader
+from datetime import datetime
+
+import json
+import os
+absolute_path = os.path.abspath(__file__) # 현재 파일의 절대 경로 반환
+current_path = os.path.dirname(absolute_path) # 현재 .py 파일이 있는 폴더 경로
+
+@tool
+def web_search(query: str):
+    """
+    주어진 query에 대해 웹검색을 하고, 결과를 반환한다.
+
+    Args:
+        query (str): 검색어
+
+    Returns:
+        dict: 검색 결과
+    """
+    client = TavilyClient()
+
+    content = client.search(
+        query, 
+        search_depth="advanced",
+        include_raw_content=True, # 검색된 페이지 전문을 가져옴
+    )
+    
+    results = content["results"]  
+
+    for result in results:
+        if result["raw_content"] is None:
+            try:
+                result["raw_content"] = load_web_page(result["url"])
+            except Exception as e:
+                print(f"Error loading page: {result['url']}")
+                print(e)
+                result["raw_content"] = result["content"]
+
+    resources_json_path = f'{current_path}/data/resources_{datetime.now().strftime('%Y_%m%d_%H%M%S')}.json'
+    with open(resources_json_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, ensure_ascii=False, indent=4)
+   
+    return results, resources_json_path  # 검색 결과와 JSON 파일 경로 반환
+
+def load_web_page(url: str):
+    loader = WebBaseLoader(url, verify_ssl=False)
+
+    content = loader.load()
+    raw_content = content[0].page_content.strip()  
+
+    while '\n\n\n' in raw_content or '\t\t\t' in raw_content:
+        raw_content = raw_content.replace('\n\n\n', '\n\n')
+        raw_content = raw_content.replace('\t\t\t', '\t\t')
+        
+    return raw_content
+
+if __name__ == "__main__":
+    results, resources_json_path = web_search.invoke("2025년 한국 경제 전망")
+    print(results)
+
+    # result = load_web_page("https://eiec.kdi.re.kr/publish/columnView.do?cidx=15029&ccode=&pp=20&pg=&sel_year=2025&sel_month=01")
+    # print(result)
+
+```
+
+[실습] 벡터 DB 만들기
+
+```python
+from tavily import TavilyClient
+from langchain_core.tools import tool
+from langchain_community.document_loaders import WebBaseLoader
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from datetime import datetime
+from dotenv import load_dotenv
+import json
+import os
+load_dotenv()
+absolute_path = os.path.abspath(__file__) # 현재 파일의 절대 경로 반환
+current_path = os.path.dirname(absolute_path) # 현재 .py 파일이 있는 폴더 경로
+
+# RAG를 위한 설정
+from langchain_openai import OpenAIEmbeddings
+from langchain_chroma import Chroma
+
+# 오픈AI Embedding 설정
+embedding = OpenAIEmbeddings(model='text-embedding-3-large')
+
+# 크로마 DB 저장 경로 설정
+persist_directory = f"{current_path}/data/chroma_store"
+
+# Chroma 객체 생성
+vectorstore = Chroma(
+    persist_directory=persist_directory,
+    embedding_function=embedding
+)
+
+@tool
+def web_search(query: str):
+    """
+    주어진 query에 대해 웹검색을 하고, 결과를 반환한다.
+
+    Args:
+        query (str): 검색어
+
+    Returns:
+        dict: 검색 결과
+    """
+    client = TavilyClient()
+
+    content = client.search(
+        query, 
+        search_depth="advanced",
+        include_raw_content=True,
+    )
+    
+    results = content["results"]   #②
+
+    for result in results:
+        if result["raw_content"] is None:
+            try:
+                result["raw_content"] = load_web_page(result["url"])
+            except Exception as e:
+                print(f"Error loading page: {result['url']}")
+                print(e)
+                result["raw_content"] = result["content"]
+
+    resources_json_path = f'{current_path}/data/resources_{datetime.now().strftime('%Y_%m%d_%H%M%S')}.json'
+    with open(resources_json_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, ensure_ascii=False, indent=4)
+   
+    return results, resources_json_path  # 검색 결과와 JSON 파일 경로 반환
+
+def web_page_to_document(web_page):
+    # raw_content와 content 중 정보가 많은 것을 page_content로 한다.
+    if len(web_page['raw_content']) > len(web_page['content']):
+        page_content = web_page['raw_content']
+    else:
+        page_content = web_page['content']
+    # 랭체인 Document로 변환
+    document = Document(
+        page_content=page_content,
+        metadata={
+            'title': web_page['title'],
+            'source': web_page['url']
+        }
+    )
+
+    return document
+
+def web_page_json_to_documents(json_file):
+    with open(json_file, "r", encoding='utf-8') as f:
+        resources = json.load(f)
+
+    documents = []
+
+    for web_page in resources:
+        document = web_page_to_document(web_page)
+        documents.append(document)
+
+    return documents
+
+def split_documents(documents, chunk_size=1000, chunk_overlap=100):
+    print('Splitting documents...')
+    print(f"{len(documents)}개의 문서를 {chunk_size}자 크기로 중첩 {chunk_overlap}자로 분할합니다.\n")
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
+
+    splits = text_splitter.split_documents(documents)
+
+    print(f"총 {len(splits)}개의 문서로 분할되었습니다.")
+    return splits
+
+# documents를 chroma DB에 저장하는 함수
+def documents_to_chroma(documents, chunk_size=1000, chunk_overlap=100):
+    print("Documents를 Chroma DB에 저장합니다.")
+
+    # documents의 url 가져오기
+    urls = [document.metadata['source'] for document in documents]
+
+    # 이미 vectorstore에 저장된 urls 가져오기
+    stored_metadatas = vectorstore._collection.get()['metadatas'] 
+    stored_web_urls = [metadata['source'] for metadata in stored_metadatas] 
+
+    # 새로운 urls만 남기기
+    new_urls = set(urls) - set(stored_web_urls)
+
+    # 새로운 urls에 대한 documents만 남기기
+    new_documents = []
+
+    for document in documents:
+        if document.metadata['source'] in new_urls:
+            new_documents.append(document)
+            print(document.metadata)
+
+    # 새로운 documents를 Chroma DB에 저장
+    splits = split_documents(new_documents, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    # 크로마 DB에 저장
+    if splits:
+        vectorstore.add_documents(splits)
+    else:
+        print("No new urls to process")
+
+# json 파일에서 documents를 만들고, 그 documents들을 Chroma DB에 저장
+def add_web_pages_json_to_chroma(json_file, chunk_size=1000, chunk_overlap=100):
+    documents = web_page_json_to_documents(json_file)
+    documents_to_chroma(
+        documents, 
+        chunk_size=chunk_size, 
+        chunk_overlap=chunk_overlap
+    )
+
+def load_web_page(url: str):
+    loader = WebBaseLoader(url, verify_ssl=False)
+
+    content = loader.load()
+    raw_content = content[0].page_content.strip()   #①
+
+    while '\n\n\n' in raw_content or '\t\t\t' in raw_content:
+        raw_content = raw_content.replace('\n\n\n', '\n\n')
+        raw_content = raw_content.replace('\t\t\t', '\t\t')
+        
+    return raw_content
+
+@tool
+def retrieve(query: str, top_k: int=5):
+    """
+    주어진 query에 대해 벡터 검색을 수행하고, 결과를 반환한다.
+    """
+    retriever = vectorstore.as_retriever(search_kwargs={"k": top_k})
+    retrieved_docs = retriever.invoke(query)
+
+    return retrieved_docs
+
+if __name__ == "__main__":
+    # results, resources_json_path = web_search.invoke("2025년 한국 경제 전망")
+    # print(results)
+
+    # result = load_web_page("https://eiec.kdi.re.kr/publish/columnView.do?cidx=15029&ccode=&pp=20&pg=&sel_year=2025&sel_month=01")
+    # print(result)
+
+    # documents = web_page_json_to_documents(f'{current_path}/data/resources_2025_0305_231308.json')  
+    # print(documents[-1])
+
+    # splits = split_documents(documents)
+    # print(splits)
+
+    # add_web_pages_json_to_chroma(f'{current_path}/data/resources_2025_0305_231308.json')
+    retrieved_docs = retrieve.invoke({"query": "한국 경제 위험 요소 "})
+    print(retrieved_docs)
+
+```
+
+[실습] 랭그래프에 연결하기
+
+```python
+# book_writer.py
+
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage, AIMessage
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers.string import StrOutputParser
+from typing_extensions import TypedDict
+from typing import List
+
+from utils import save_state, get_outline, save_outline 
+from models import Task
+from tools import retrieve  
+from datetime import datetime
+import os 
+
+# 현재 폴더 경로 찾기
+# 랭그래프 이미지로 저장 및 추후 작업 결과 파일 저장 경로로 활용
+filename = os.path.basename(__file__) # 현재 파일명 반환
+absolute_path = os.path.abspath(__file__) # 현재 파일의 절대 경로 반환
+current_path = os.path.dirname(absolute_path) # 현재 .py 파일이 있는 폴더 경로 
+
+# 모델 초기화
+llm = ChatOpenAI(model="gpt-4o") 
+
+# 상태 정의
+class State(TypedDict):
+    messages: List[AnyMessage | str]
+    task_history: List[Task]    
+    references: dict
+
+def supervisor(state: State): # supervisor 에이전트 추가
+    print("\n\n============ SUPERVISOR ============")
+
+    # 시스템 프롬프트 정의
+    supervisor_system_prompt = PromptTemplate.from_template(
+        """
+        너는 AI 팀의 supervisor로서 AI 팀의 작업을 관리하고 지도한다.
+        사용자가 원하는 책을 써야 한다는 최종 목표를 염두에 두고, 
+        사용자의 요구를 달성하기 위해 현재 해야할 일이 무엇인지 결정한다.
+
+        supervisor가 활용할 수 있는 agent는 다음과 같다.     
+        - content_strategist: 사용자의 요구사항이 명확해졌을 때 사용한다. AI 팀의 콘텐츠 전략을 결정하고, 전체 책의 목차(outline)를 작성한다. 
+        - communicator: AI 팀에서 해야 할 일을 스스로 판단할 수 없을 때 사용한다. 사용자에게 진행상황을 사용자에게 보고하고, 다음 지시를 물어본다. 
+        - vector_search_agent: 벡터 DB 검색을 통해 목차(outline) 작성에 필요한 정보를 확보한다.
+
+        아래 내용을 고려하여, 현재 해야할 일이 무엇인지, 사용할 수 있는 agent를 단답으로 말하라.
+
+        ------------------------------------------
+        previous_outline: {outline}
+        ------------------------------------------
+        messages:
+        {messages}
+        """
+    )
+
+    # 체인 연결
+    supervisor_chain = supervisor_system_prompt | llm. with_structured_output(Task)    
+
+    # 메시지 가져오기
+    messages = state.get("messages", [])		#⑤
+
+    # inputs 설정
+    inputs = {
+        "messages": messages,
+        "outline": get_outline(current_path)
+    }
+
+    # task 문자열로 생성
+    task = supervisor_chain.invoke(inputs) 	#⑦
+    task_history = state.get("task_history", [])    # 작업 이력 가져오기
+    task_history.append(task)                    	# 작업 이력에 추가
+
+   
+    # 메시지 추가
+    supervisor_message = AIMessage(f"[Supervisor] {task}")
+    messages.append(supervisor_message)
+    print(supervisor_message.content)
+
+    # state 업데이트
+    return {
+        "messages": messages, 
+        "task_history": task_history
+    }
+
+# supervisor's route
+def supervisor_router(state: State):
+    task = state['task_history'][-1]
+    return task.agent			
+
+def vector_search_agent(state: State):
+    print("\n\n============ VECTOR SEARCH AGENT ============")
+    
+    tasks = state.get("task_history", [])
+    task = tasks[-1]
+    if task.agent != "vector_search_agent":
+        raise ValueError(f"Vector Search Agent가 아닌 agent가 Vector Search Agent를 시도하고 있습니다.\n {task}")
+
+    vector_search_system_prompt = PromptTemplate.from_template(
+        """
+        너는 다른 AI Agent 들이 수행한 작업을 바탕으로, 
+        목차(outline) 작성에 필요한 정보를 벡터 검색을 통해 찾아내는 Agent이다.
+
+        현재 목차(outline)을 작성하는데 필요한 정보를 확보하기 위해, 
+        다음 내용을 활용해 적절한 벡터 검색을 수행하라. 
+
+        - 검색 목적: {mission}
+        --------------------------------
+        - 과거 검색 내용: {references}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        --------------------------------
+        - 목차(outline): {outline}
+        """
+    )
+
+    # inputs 설정
+    mission = task.description
+    references = state.get("references", {"queries": [], "docs": []})
+    messages = state["messages"]
+    outline = get_outline(current_path)
+
+    inputs = {
+        "mission": mission,
+        "references": references,
+        "messages": messages,
+        "outline": outline
+    }
+
+    # LLM과 벡터 검색 모델 연결
+    llm_with_retriever = llm.bind_tools([retrieve]) 
+    vector_search_chain = vector_search_system_prompt | llm_with_retriever
+
+    # LLM과 벡터 검색 모델 연결
+    search_plans = vector_search_chain.invoke(inputs)
+    # 검색할 내용 출력
+    for tool_call in search_plans.tool_calls:
+        print('-----------------------------------', tool_call)
+        args = tool_call["args"]
+       
+        query = args["query"] 
+        retrieved_docs = retrieve(args)
+		#① (1) 결과 담아 두기
+        references["queries"].append(query) 
+        references["docs"] += retrieved_docs
+    
+    unique_docs = []
+    unique_page_contents = set()
+
+    for doc in references["docs"]:
+        if doc.page_content not in unique_page_contents:
+            unique_docs.append(doc)
+            unique_page_contents.add(doc.page_content)
+    references["docs"] = unique_docs
+
+    # 검색 결과 출력 – 쿼리 출력
+    print('Queries:--------------------------')
+    queries = references["queries"]
+    for query in queries:
+        print(query)
+    
+    # 검색 결과 출력 – 문서 청크 출력
+    print('References:--------------------------')
+    for doc in references["docs"]:
+        print(doc.page_content[:100])
+        print('--------------------------')
+
+    # task 완료
+    tasks[-1].done = True
+    tasks[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 새로운 task 추가
+    new_task = Task(
+        agent="communicator",
+        done=False,
+        description="AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다",
+        done_at=""
+    )
+    tasks.append(new_task)
+
+    # vector search agent의 작업후기를 메시지로 생성
+    msg_str = f"[VECTOR SEARCH AGENT] 다음 질문에 대한 검색 완료: {queries}"
+    message = AIMessage(msg_str)
+    print(msg_str)
+
+    messages.append(message)
+    # state 업데이트
+    return {
+        "messages": messages,
+        "task_history": tasks,
+        "references": references
+    }
+
+# 목차를 작성하는 노드(agent)
+def content_strategist(state: State):
+    print("\n\n============ CONTENT STRATEGIST ============")
+
+    # 시스템 프롬프트 정의
+    content_strategist_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 콘텐츠 전략가(Content Strategist)로서,
+        이전 대화 내용을 바탕으로 사용자의 요구사항을 분석하고, AI팀이 쓸 책의 세부 목차를 결정한다.
+
+        지난 목차가 있다면 그 버전을 사용자의 요구에 맞게 수정하고, 없다면 새로운 목차를 제안한다.
+
+        --------------------------------
+        - 지난 목차: {outline}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        """
+    )
+
+    # 시스템 프롬프트와 모델을 연결
+    content_strategist_chain = content_strategist_system_prompt | llm | StrOutputParser()
+
+    messages = state["messages"]        # 상태에서 메시지를 가져옴
+    outline = get_outline(current_path) # 저장된 목차를 가져옴
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": outline
+    }
+
+    # 목차 작성
+    gathered = ''
+    for chunk in content_strategist_chain.stream(inputs):
+        gathered += chunk
+        print(chunk, end='')
+
+    print()
+
+    save_outline(current_path, gathered) # 목차 저장
+
+    # 메시지 추가    
+    content_strategist_message = f"[Content Strategist] 목차 작성 완료"
+    print(content_strategist_message)
+    messages.append(AIMessage(content_strategist_message))
+
+    task_history = state.get("task_history", []) # task_history 가져오기
+    # 최근 task 작업완료(done) 처리하기
+    if task_history[-1].agent != "content_strategist": 
+        raise ValueError(f"Content Strategist가 아닌 agent가 목차 작성을 시도하고 있습니다.\n {task_history[-1]}")
+    
+    task_history[-1].done = True
+    task_history[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 다음 작업이 communicator로 사용자와 대화하는 것이므로 새 작업 추가 
+    new_task = Task(
+        agent="communicator",
+        done=False,
+        description="AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다",
+        done_at=""
+    )
+    task_history.append(new_task)
+
+    print(new_task)
+
+    # 현재 state를 업데이트한다. 
+    return {
+        "messages": messages,
+        "task_history": task_history
+    }
+
+# 사용자와 대화할 노드(agent): communicator
+def communicator(state: State):
+    print("\n\n============ COMMUNICATOR ============")
+
+    # 시스템 프롬프트 정의
+    communicator_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 커뮤니케이터로서, 
+        AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다. 
+
+        사용자도 outline(목차)을 이미 보고 있으므로, 다시 출력할 필요는 없다.
+        outline: {outline} 
+        --------------------------------
+        messages: {messages}
+        """
+    )
+
+    #② 시스템 프롬프트와 모델을 연결
+    system_chain = communicator_system_prompt | llm
+
+    # 상태에서 메시지를 가져옴
+    messages = state["messages"]
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": get_outline(current_path)
+    }
+
+    # 스트림되는 메시지를 출력하면서, gathered에 모으기
+    gathered = None
+
+    print('\nAI\t: ', end='')
+    for chunk in system_chain.stream(inputs):
+        print(chunk.content, end='')
+
+        if gathered is None:
+            gathered = chunk
+        else:
+            gathered += chunk
+
+    messages.append(gathered)
+
+    task_history = state.get("task_history", []) 
+    if task_history[-1].agent != "communicator":
+        raise ValueError(f"Communicator가 아닌 agent가 대화를 시도하고 있습니다.\n {task_history[-1]}")
+    
+    task_history[-1].done = True
+    task_history[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    return {
+        "messages": messages,
+        "task_history": task_history
+    }
+
+# 상태 그래프 정의
+graph_builder = StateGraph(State)
+
+# Nodes
+graph_builder.add_node("supervisor", supervisor)     
+graph_builder.add_node("communicator", communicator)
+graph_builder.add_node("content_strategist", content_strategist)
+graph_builder.add_node("vector_search_agent", vector_search_agent)
+
+# Edges
+graph_builder.add_edge(START, "supervisor")
+graph_builder.add_conditional_edges(
+    "supervisor", 
+    supervisor_router,
+    {
+        "content_strategist": "content_strategist",
+        "communicator": "communicator",
+        "vector_search_agent": "vector_search_agent"
+    }
+)
+graph_builder.add_edge("content_strategist", "communicator")
+graph_builder.add_edge("vector_search_agent", "communicator")
+graph_builder.add_edge("communicator", END)
+
+graph = graph_builder.compile()
+
+graph.get_graph().draw_mermaid_png(output_file_path=absolute_path.replace('.py', '.png'))
+
+# 상태 초기화
+state = State(
+    messages = [
+        SystemMessage(
+                f"""
+            너희 AI들은 사용자의 요구에 맞는 책을 쓰는 작가팀이다.
+            사용자가 사용하는 언어로 대화하라.
+
+            현재시각은 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}이다.
+
+            """
+        )
+    ],
+    task_history=[]
+)
+
+while True:
+    user_input = input("\nUser\t: ").strip()
+
+    if user_input.lower() in ['exit', 'quit', 'q']:
+        print("Goodbye!")
+        break
+    
+    state["messages"].append(HumanMessage(user_input))
+    state = graph.invoke(state)
+
+    print('\n------------------------------------ MESSAGE COUNT\t', len(state["messages"]))
+
+    save_state(current_path, state) # 현재 state 내용 저장
+
+```
+
+```python
+# models.py
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class Task(BaseModel):
+    agent: Literal[
+        "content_strategist",
+        "communicator",
+        "vector_search_agent",
+    ] = Field(
+        ...,
+        description="""
+        작업을 수행하는 agent의 종류.
+        - content_strategist: 콘텐츠 전략을 수립하는 작업을 수행한다. 사용자의 요구사항이 명확해졌을 때 사용한다. AI 팀의 콘텐츠 전략을 결정하고, 전체 책의 목차(outline)를 작성한다. 
+        - communicator: AI 팀에서 해야 할 일을 스스로 판단할 수 없을 때 사용한다. 사용자에게 진행상황을 사용자에게 보고하고, 다음 지시를 물어본다.
+        - vector_search_agent: 벡터 DB 검색을 통해 목차(outline) 작성에 필요한 정보를 확보한다.
+        """
+    )
+	
+    done: bool = Field(..., description="종료 여부")
+    description: str = Field(..., description="어떤 작업을 해야 하는지에 대한 설명")
+	
+    done_at: str = Field(..., description="할 일이 완료된 날짜와 시간")
+	
+    def to_dict(self):
+        return {
+            "agent": self.agent,
+            "done": self.done,
+            "description": self.description,
+            "done_at": self.done_at
+        }  
+
+```
+
+```python
+#utils.py
+import os
+import json
+
+def save_state(current_path, state):
+    if not os.path.exists(f"{current_path}/data"):
+        os.makedirs(f"{current_path}/data")
+    
+    state_dict = {}
+
+    messages = [(m.__class__.__name__, m.content) for m in state["messages"]]
+    state_dict["messages"] = messages
+    state_dict["task_history"] = [task.to_dict() for task in state.get("task_history", [])]
+
+    # references
+    references = state.get("references", {"queries": [], "docs": []})
+    state_dict["references"] = {
+        "queries": references["queries"], 
+        "docs": [doc.metadata for doc in references["docs"]]
+    }
+    
+    with open(f"{current_path}/data/state.json", "w", encoding='utf-8') as f:
+        json.dump(state_dict, f, indent=4, ensure_ascii=False)
+
+def get_outline(current_path):
+    outline = '아직 작성된 목차가 없습니다.'
+
+    if os.path.exists(f"{current_path}/data/outline.md"):
+        with open(f"{current_path}/data/outline.md", "r", encoding='utf-8') as f:
+            outline = f.read()  
+    return outline
+
+def save_outline(current_path, outline):
+    if not os.path.exists(f"{current_path}/data"):
+        os.makedirs(f"{current_path}/data")
+    
+    with open(f"{current_path}/data/outline.md", "w", encoding='utf-8') as f:
+        f.write(outline)
+    return outline
+
+```
+
+14-4 부족한 정보를 검색하는 웹 검색 에이전트
+
+[실습] 웹 검색 에이전트 web_search_agent 만들기
+
+```python
+# book_writer_0.py 
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage, AIMessage
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers.string import StrOutputParser
+from typing_extensions import TypedDict
+from typing import List
+
+from utils import save_state, get_outline, save_outline 
+from models import Task
+from tools import retrieve, web_search, add_web_pages_json_to_chroma 
+from datetime import datetime
+import os 
+
+# 현재 폴더 경로 찾기
+# 랭그래프 이미지로 저장 및 추후 작업 결과 파일 저장 경로로 활용
+filename = os.path.basename(__file__) # 현재 파일명 반환
+absolute_path = os.path.abspath(__file__) # 현재 파일의 절대 경로 반환
+current_path = os.path.dirname(absolute_path) # 현재 .py 파일이 있는 폴더 경로 
+
+# 모델 초기화
+llm = ChatOpenAI(model="gpt-4o") 
+
+# 상태 정의
+class State(TypedDict):
+    messages: List[AnyMessage | str]
+    task_history: List[Task]    
+    references: dict
+
+def supervisor(state: State): # supervisor 에이전트 추가
+    print("\n\n============ SUPERVISOR ============")
+
+    # 시스템 프롬프트 정의
+    supervisor_system_prompt = PromptTemplate.from_template(
+        """
+        너는 AI 팀의 supervisor로서 AI 팀의 작업을 관리하고 지도한다.
+        사용자가 원하는 책을 써야 한다는 최종 목표를 염두에 두고, 
+        사용자의 요구를 달성하기 위해 현재 해야할 일이 무엇인지 결정한다.
+
+        supervisor가 활용할 수 있는 agent는 다음과 같다.     
+        - content_strategist: 사용자의 요구사항이 명확해졌을 때 사용한다. AI 팀의 콘텐츠 전략을 결정하고, 전체 책의 목차(outline)를 작성한다. 
+        - communicator: AI 팀에서 해야 할 일을 스스로 판단할 수 없을 때 사용한다. 사용자에게 진행상황을 사용자에게 보고하고, 다음 지시를 물어본다. 
+        - web_search_agent: 웹 검색을 통해 목차(outline) 작성에 필요한 정보를 확보한다.
+        - vector_search_agent: 벡터 DB 검색을 통해 목차(outline) 작성에 필요한 정보를 확보한다.
+
+        아래 내용을 고려하여, 현재 해야할 일이 무엇인지, 사용할 수 있는 agent를 단답으로 말하라.
+
+        ------------------------------------------
+        previous_outline: {outline}
+        ------------------------------------------
+        messages:
+        {messages}
+        """
+    )
+
+    # 체인 연결
+    supervisor_chain = supervisor_system_prompt | llm. with_structured_output(Task)    
+
+    # 메시지 가져오기
+    messages = state.get("messages", [])		#⑤
+
+    # inputs 설정
+    inputs = {
+        "messages": messages,
+        "outline": get_outline(current_path)
+    }
+
+    # task 문자열로 생성
+    task = supervisor_chain.invoke(inputs) 	#⑦
+    task_history = state.get("task_history", [])    # 작업 이력 가져오기
+    task_history.append(task)                    	# 작업 이력에 추가
+
+   
+    # 메시지 추가
+    supervisor_message = AIMessage(f"[Supervisor] {task}")
+    messages.append(supervisor_message)
+    print(supervisor_message.content)
+
+    # state 업데이트
+    return {
+        "messages": messages, 
+        "task_history": task_history
+    }
+
+# supervisor's route
+def supervisor_router(state: State):
+    task = state['task_history'][-1]
+    return task.agent			
+
+def vector_search_agent(state: State):
+    print("\n\n============ VECTOR SEARCH AGENT ============")
+    
+    tasks = state.get("task_history", [])
+    task = tasks[-1]
+    if task.agent != "vector_search_agent":
+        raise ValueError(f"Vector Search Agent가 아닌 agent가 Vector Search Agent를 시도하고 있습니다.\n {task}")
+
+    vector_search_system_prompt = PromptTemplate.from_template(
+        """
+        너는 다른 AI Agent 들이 수행한 작업을 바탕으로, 
+        목차(outline) 작성에 필요한 정보를 벡터 검색을 통해 찾아내는 Agent이다.
+
+        현재 목차(outline)을 작성하는데 필요한 정보를 확보하기 위해, 
+        다음 내용을 활용해 적절한 벡터 검색을 수행하라. 
+
+        - 검색 목적: {mission}
+        --------------------------------
+        - 과거 검색 내용: {references}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        --------------------------------
+        - 목차(outline): {outline}
+        """
+    )
+
+    # inputs 설정
+    mission = task.description
+    references = state.get("references", {"queries": [], "docs": []})
+    messages = state["messages"]
+    outline = get_outline(current_path)
+
+    inputs = {
+        "mission": mission,
+        "references": references,
+        "messages": messages,
+        "outline": outline
+    }
+
+    # LLM과 벡터 검색 모델 연결
+    llm_with_retriever = llm.bind_tools([retrieve]) 
+    vector_search_chain = vector_search_system_prompt | llm_with_retriever
+
+    # LLM과 벡터 검색 모델 연결
+    search_plans = vector_search_chain.invoke(inputs)
+    # 검색할 내용 출력
+    for tool_call in search_plans.tool_calls:
+        print('-----------------------------------', tool_call)
+        args = tool_call["args"]
+       
+        query = args["query"] 
+        retrieved_docs = retrieve(args)
+		#① (1) 결과 담아 두기
+        references["queries"].append(query) 
+        references["docs"] += retrieved_docs
+    
+    unique_docs = []
+    unique_page_contents = set()
+
+    for doc in references["docs"]:
+        if doc.page_content not in unique_page_contents:
+            unique_docs.append(doc)
+            unique_page_contents.add(doc.page_content)
+    references["docs"] = unique_docs
+
+    # 검색 결과 출력 – 쿼리 출력
+    print('Queries:--------------------------')
+    queries = references["queries"]
+    for query in queries:
+        print(query)
+    
+    # 검색 결과 출력 – 문서 청크 출력
+    print('References:--------------------------')
+    for doc in references["docs"]:
+        print(doc.page_content[:100])
+        print('--------------------------')
+
+    # task 완료
+    tasks[-1].done = True
+    tasks[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 새로운 task 추가
+    new_task = Task(
+        agent="communicator",
+        done=False,
+        description="AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다",
+        done_at=""
+    )
+    tasks.append(new_task)
+
+    # vector search agent의 작업후기를 메시지로 생성
+    msg_str = f"[VECTOR SEARCH AGENT] 다음 질문에 대한 검색 완료: {queries}"
+    message = AIMessage(msg_str)
+    print(msg_str)
+
+    messages.append(message)
+    # state 업데이트
+    return {
+        "messages": messages,
+        "task_history": tasks,
+        "references": references
+    }
+
+# 목차를 작성하는 노드(agent)
+def content_strategist(state: State):
+    print("\n\n============ CONTENT STRATEGIST ============")
+
+    # 시스템 프롬프트 정의
+    content_strategist_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 콘텐츠 전략가(Content Strategist)로서,
+        이전 대화 내용을 바탕으로 사용자의 요구사항을 분석하고, AI팀이 쓸 책의 세부 목차를 결정한다.
+
+        지난 목차가 있다면 그 버전을 사용자의 요구에 맞게 수정하고, 없다면 새로운 목차를 제안한다.
+
+        --------------------------------
+        - 지난 목차: {outline}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        """
+    )
+
+    # 시스템 프롬프트와 모델을 연결
+    content_strategist_chain = content_strategist_system_prompt | llm | StrOutputParser()
+
+    messages = state["messages"]        # 상태에서 메시지를 가져옴
+    outline = get_outline(current_path) # 저장된 목차를 가져옴
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": outline
+    }
+
+    # 목차 작성
+    gathered = ''
+    for chunk in content_strategist_chain.stream(inputs):
+        gathered += chunk
+        print(chunk, end='')
+
+    print()
+
+    save_outline(current_path, gathered) # 목차 저장
+
+    # 메시지 추가    
+    content_strategist_message = f"[Content Strategist] 목차 작성 완료"
+    print(content_strategist_message)
+    messages.append(AIMessage(content_strategist_message))
+
+    task_history = state.get("task_history", []) # task_history 가져오기
+    # 최근 task 작업완료(done) 처리하기
+    if task_history[-1].agent != "content_strategist": 
+        raise ValueError(f"Content Strategist가 아닌 agent가 목차 작성을 시도하고 있습니다.\n {task_history[-1]}")
+    
+    task_history[-1].done = True
+    task_history[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 다음 작업이 communicator로 사용자와 대화하는 것이므로 새 작업 추가 
+    new_task = Task(
+        agent="communicator",
+        done=False,
+        description="AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다",
+        done_at=""
+    )
+    task_history.append(new_task)
+
+    print(new_task)
+
+    # 현재 state를 업데이트한다. 
+    return {
+        "messages": messages,
+        "task_history": task_history
+    }
+
+def web_search_agent(state: State): #① (0)
+    print("\n\n============ WEB SEARCH AGENT ============")
+
+    # 작업 리스트 가져와서 web search agent 가 할 일인지 확인하기
+    tasks = state.get("task_history", [])
+    task = tasks[-1]
+
+    if task.agent != "web_search_agent":
+        raise ValueError(f"Web Search Agent가 아닌 agent가 Web Search Agent를 시도하고 있습니다.\n {task}")
+    
+    #③ 시스템 프롬프트 정의
+    web_search_system_prompt = PromptTemplate.from_template(
+        """
+        너는 다른 AI Agent 들이 수행한 작업을 바탕으로, 
+        목차(outline) 작성에 필요한 정보를 웹 검색을 통해 찾아내는 Web Search Agent이다.
+
+        현재 부족한 정보를 검색하고, 복합적인 질문은 나눠서 검색하라.
+
+        - 검색 목적: {mission}
+        --------------------------------
+        - 과거 검색 내용: {references}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        --------------------------------
+        - 목차(outline): {outline}
+        --------------------------------
+        - 현재 시각 : {current_time}
+        """
+    )
+    
+    #④ 기존 대화 내용 가져오기
+    messages = state.get("messages", [])
+
+    #⑤ 인풋 자료 준비하기
+    inputs = {
+        "mission": task.description,
+        "references": state.get("references", {"queries": [], "docs": []}),
+        "messages": messages,
+        "outline": get_outline(current_path),
+        "current_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    #⑥ LLM과 웹 검색 모델 연결
+    llm_with_web_search = llm.bind_tools([web_search])
+
+    #⑦ 시스템 프롬프트와 모델을 연결
+    web_search_chain = web_search_system_prompt | llm_with_web_search
+
+    #⑧ 웹 검색 tool_calls 가져오기
+    search_plans = web_search_chain.invoke(inputs)
+
+    #⑨ 어떤 내용을 검색했는지 담아두기
+    queries = []
+
+    #⑩ 검색 계획(tool_calls)에 따라 검색하기
+    for tool_call in search_plans.tool_calls:
+        print('-------- web search --------', tool_call)
+        args = tool_call["args"]
+        
+        queries.append(args["query"])
+
+        # (10)  검색 결과를 chroma에 추가
+        _, json_path = web_search.invoke(args)
+        print('json_path:', json_path)
+
+        # (10)  JSON 파일을 chroma에 추가
+        add_web_pages_json_to_chroma(json_path)
+
+    #⑪ (11) task 완료
+    tasks[-1].done = True
+    tasks[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    #⑪ (11) 새로운 task 추가
+    task_desc = "AI팀이 쓸 책의 세부 목차를 결정하기 위한 정보를 벡터 검색을 통해 찾아낸다."
+    task_desc += f" 다음 항목이 새로 추가되었다\n: {queries}"
+    
+    new_task = Task(
+        agent="vector_search_agent",
+        done=False,
+        description=task_desc,
+        done_at=""
+    )
+
+    tasks.append(new_task)
+
+    #⑫ (12) 작업 후기 메시지
+    msg_str = f"[WEB SEARCH AGENT] 다음 질문에 대한 검색 완료: {queries}"
+    messages.append(AIMessage(msg_str))
+
+    #⑬ (13) state 업데이트
+    return {
+        "messages": messages,
+        "task_history": tasks
+    }
+
+# 사용자와 대화할 노드(agent): communicator
+def communicator(state: State):
+    print("\n\n============ COMMUNICATOR ============")
+
+    # 시스템 프롬프트 정의
+    communicator_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 커뮤니케이터로서, 
+        AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다. 
+
+        사용자도 outline(목차)을 이미 보고 있으므로, 다시 출력할 필요는 없다.
+        outline: {outline} 
+        --------------------------------
+        messages: {messages}
+        """
+    )
+
+    #② 시스템 프롬프트와 모델을 연결
+    system_chain = communicator_system_prompt | llm
+
+    # 상태에서 메시지를 가져옴
+    messages = state["messages"]
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": get_outline(current_path)
+    }
+
+    # 스트림되는 메시지를 출력하면서, gathered에 모으기
+    gathered = None
+
+    print('\nAI\t: ', end='')
+    for chunk in system_chain.stream(inputs):
+        print(chunk.content, end='')
+
+        if gathered is None:
+            gathered = chunk
+        else:
+            gathered += chunk
+
+    messages.append(gathered)
+
+    task_history = state.get("task_history", []) 
+    if task_history[-1].agent != "communicator":
+        raise ValueError(f"Communicator가 아닌 agent가 대화를 시도하고 있습니다.\n {task_history[-1]}")
+    
+    task_history[-1].done = True
+    task_history[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    return {
+        "messages": messages,
+        "task_history": task_history
+    }
+
+# 상태 그래프 정의
+graph_builder = StateGraph(State)
+
+# Nodes
+graph_builder.add_node("supervisor", supervisor)     
+graph_builder.add_node("communicator", communicator)
+graph_builder.add_node("content_strategist", content_strategist)
+graph_builder.add_node("vector_search_agent", vector_search_agent)
+graph_builder.add_node("web_search_agent", web_search_agent)
+
+# Edges
+graph_builder.add_edge(START, "supervisor")
+graph_builder.add_conditional_edges(
+    "supervisor", 
+    supervisor_router,
+    {
+        "content_strategist": "content_strategist",
+        "communicator": "communicator",
+        "vector_search_agent": "vector_search_agent", 
+        "web_search_agent": "web_search_agent"
+    }
+)
+graph_builder.add_edge("content_strategist", "communicator")
+graph_builder.add_edge("web_search_agent", "vector_search_agent") #③
+graph_builder.add_edge("vector_search_agent", "communicator")
+graph_builder.add_edge("communicator", END)
+
+graph = graph_builder.compile()
+
+graph.get_graph().draw_mermaid_png(output_file_path=absolute_path.replace('.py', '.png'))
+
+# 상태 초기화
+state = State(
+    messages = [
+        SystemMessage(
+                f"""
+            너희 AI들은 사용자의 요구에 맞는 책을 쓰는 작가팀이다.
+            사용자가 사용하는 언어로 대화하라.
+
+            현재시각은 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}이다.
+
+            """
+        )
+    ],
+    task_history=[]
+)
+
+while True:
+    user_input = input("\nUser\t: ").strip()
+
+    if user_input.lower() in ['exit', 'quit', 'q']:
+        print("Goodbye!")
+        break
+    
+    state["messages"].append(HumanMessage(user_input))
+    state = graph.invoke(state)
+
+    print('\n------------------------------------ MESSAGE COUNT\t', len(state["messages"]))
+
+    save_state(current_path, state) # 현재 state 내용 저장
+
+```
+
+```python
+# models.py
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class Task(BaseModel):
+    agent: Literal[
+        "content_strategist",
+        "communicator",
+        "web_search_agent",
+        "vector_search_agent",
+    ] = Field(
+        ...,
+        description="""
+        작업을 수행하는 agent의 종류.
+        - content_strategist: 콘텐츠 전략을 수립하는 작업을 수행한다. 사용자의 요구사항이 명확해졌을 때 사용한다. AI 팀의 콘텐츠 전략을 결정하고, 전체 책의 목차(outline)를 작성한다. 
+        - communicator: AI 팀에서 해야 할 일을 스스로 판단할 수 없을 때 사용한다. 사용자에게 진행상황을 사용자에게 보고하고, 다음 지시를 물어본다.
+        - web_search_agent: 웹 검색을 통해 목차(outline) 작성에 필요한 정보를 확보한다.
+        - vector_search_agent: 벡터 DB 검색을 통해 목차(outline) 작성에 필요한 정보를 확보한다.
+        """
+    )
+	
+    done: bool = Field(..., description="종료 여부")
+    description: str = Field(..., description="어떤 작업을 해야 하는지에 대한 설명")
+	
+    done_at: str = Field(..., description="할 일이 완료된 날짜와 시간")
+	
+    def to_dict(self):
+        return {
+            "agent": self.agent,
+            "done": self.done,
+            "description": self.description,
+            "done_at": self.done_at
+        }  
+
+```
+
+[실습] 목차에 검색 결과 활용하기
+
+```python
+# book_writer.py
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage, AIMessage
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers.string import StrOutputParser
+from typing_extensions import TypedDict
+from typing import List
+
+from utils import save_state, get_outline, save_outline 
+from models import Task
+from tools import retrieve, web_search, add_web_pages_json_to_chroma 
+from datetime import datetime
+import os 
+
+# 현재 폴더 경로 찾기
+# 랭그래프 이미지로 저장 및 추후 작업 결과 파일 저장 경로로 활용
+filename = os.path.basename(__file__) # 현재 파일명 반환
+absolute_path = os.path.abspath(__file__) # 현재 파일의 절대 경로 반환
+current_path = os.path.dirname(absolute_path) # 현재 .py 파일이 있는 폴더 경로 
+
+# 모델 초기화
+llm = ChatOpenAI(model="gpt-4o") 
+
+# 상태 정의
+class State(TypedDict):
+    messages: List[AnyMessage | str]
+    task_history: List[Task]    
+    references: dict
+
+def supervisor(state: State): # supervisor 에이전트 추가
+    print("\n\n============ SUPERVISOR ============")
+
+    # 시스템 프롬프트 정의
+    supervisor_system_prompt = PromptTemplate.from_template(
+        """
+        너는 AI 팀의 supervisor로서 AI 팀의 작업을 관리하고 지도한다.
+        사용자가 원하는 책을 써야 한다는 최종 목표를 염두에 두고, 
+        사용자의 요구를 달성하기 위해 현재 해야할 일이 무엇인지 결정한다.
+
+        supervisor가 활용할 수 있는 agent는 다음과 같다.     
+        - content_strategist: 사용자의 요구사항이 명확해졌을 때 사용한다. AI 팀의 콘텐츠 전략을 결정하고, 전체 책의 목차(outline)를 작성한다. 
+        - communicator: AI 팀에서 해야 할 일을 스스로 판단할 수 없을 때 사용한다. 사용자에게 진행상황을 사용자에게 보고하고, 다음 지시를 물어본다. 
+        - web_search_agent: 웹 검색을 통해 목차(outline) 작성에 필요한 정보를 확보한다.
+        - vector_search_agent: 벡터 DB 검색을 통해 목차(outline) 작성에 필요한 정보를 확보한다.
+
+        아래 내용을 고려하여, 현재 해야할 일이 무엇인지, 사용할 수 있는 agent를 단답으로 말하라.
+
+        ------------------------------------------
+        previous_outline: {outline}
+        ------------------------------------------
+        messages:
+        {messages}
+        """
+    )
+
+    # 체인 연결
+    supervisor_chain = supervisor_system_prompt | llm. with_structured_output(Task)    
+
+    # 메시지 가져오기
+    messages = state.get("messages", [])		#⑤
+
+    # inputs 설정
+    inputs = {
+        "messages": messages,
+        "outline": get_outline(current_path)
+    }
+
+    # task 문자열로 생성
+    task = supervisor_chain.invoke(inputs) 	#⑦
+    task_history = state.get("task_history", [])    # 작업 이력 가져오기
+    task_history.append(task)                    	# 작업 이력에 추가
+
+   
+    # 메시지 추가
+    supervisor_message = AIMessage(f"[Supervisor] {task}")
+    messages.append(supervisor_message)
+    print(supervisor_message.content)
+
+    # state 업데이트
+    return {
+        "messages": messages, 
+        "task_history": task_history
+    }
+
+# supervisor's route
+def supervisor_router(state: State):
+    task = state['task_history'][-1]
+    return task.agent			
+
+def vector_search_agent(state: State):
+    print("\n\n============ VECTOR SEARCH AGENT ============")
+    
+    tasks = state.get("task_history", [])
+    task = tasks[-1]
+    if task.agent != "vector_search_agent":
+        raise ValueError(f"Vector Search Agent가 아닌 agent가 Vector Search Agent를 시도하고 있습니다.\n {task}")
+
+    vector_search_system_prompt = PromptTemplate.from_template(
+        """
+        너는 다른 AI Agent 들이 수행한 작업을 바탕으로, 
+        목차(outline) 작성에 필요한 정보를 벡터 검색을 통해 찾아내는 Agent이다.
+
+        현재 목차(outline)을 작성하는데 필요한 정보를 확보하기 위해, 
+        다음 내용을 활용해 적절한 벡터 검색을 수행하라. 
+
+        - 검색 목적: {mission}
+        --------------------------------
+        - 과거 검색 내용: {references}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        --------------------------------
+        - 목차(outline): {outline}
+        """
+    )
+
+    # inputs 설정
+    mission = task.description
+    references = state.get("references", {"queries": [], "docs": []})
+    messages = state["messages"]
+    outline = get_outline(current_path)
+
+    inputs = {
+        "mission": mission,
+        "references": references,
+        "messages": messages,
+        "outline": outline
+    }
+
+    # LLM과 벡터 검색 모델 연결
+    llm_with_retriever = llm.bind_tools([retrieve]) 
+    vector_search_chain = vector_search_system_prompt | llm_with_retriever
+
+    # LLM과 벡터 검색 모델 연결
+    search_plans = vector_search_chain.invoke(inputs)
+    # 검색할 내용 출력
+    for tool_call in search_plans.tool_calls:
+        print('-----------------------------------', tool_call)
+        args = tool_call["args"]
+       
+        query = args["query"] 
+        retrieved_docs = retrieve(args)
+		#① (1) 결과 담아 두기
+        references["queries"].append(query) 
+        references["docs"] += retrieved_docs
+    
+    unique_docs = []
+    unique_page_contents = set()
+
+    for doc in references["docs"]:
+        if doc.page_content not in unique_page_contents:
+            unique_docs.append(doc)
+            unique_page_contents.add(doc.page_content)
+    references["docs"] = unique_docs
+
+    # 검색 결과 출력 – 쿼리 출력
+    print('Queries:--------------------------')
+    queries = references["queries"]
+    for query in queries:
+        print(query)
+    
+    # 검색 결과 출력 – 문서 청크 출력
+    print('References:--------------------------')
+    for doc in references["docs"]:
+        print(doc.page_content[:100])
+        print('--------------------------')
+
+    # task 완료
+    tasks[-1].done = True
+    tasks[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 새로운 task 추가
+    new_task = Task(
+        agent="communicator",
+        done=False,
+        description="AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다",
+        done_at=""
+    )
+    tasks.append(new_task)
+
+    # vector search agent의 작업후기를 메시지로 생성
+    msg_str = f"[VECTOR SEARCH AGENT] 다음 질문에 대한 검색 완료: {queries}"
+    message = AIMessage(msg_str)
+    print(msg_str)
+
+    messages.append(message)
+    # state 업데이트
+    return {
+        "messages": messages,
+        "task_history": tasks,
+        "references": references
+    }
+
+# 목차를 작성하는 노드(agent)
+def content_strategist(state: State):
+    print("\n\n============ CONTENT STRATEGIST ============")
+
+    # 시스템 프롬프트 정의
+    content_strategist_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 콘텐츠 전략가(Content Strategist)로서,
+        이전 대화 내용을 바탕으로 사용자의 요구사항을 분석하고, AI팀이 쓸 책의 세부 목차를 결정한다.
+
+        지난 목차가 있다면 그 버전을 사용자의 요구에 맞게 수정하고, 없다면 새로운 목차를 제안한다.
+        목차를 작성하는데 필요한 정보는 "참고 자료"에 있으므로 활용한다. 
+
+        --------------------------------
+        - 지난 목차: {outline}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        --------------------------------
+        - 참고 자료: {references}
+        """
+    )
+
+    # 시스템 프롬프트와 모델을 연결
+    content_strategist_chain = content_strategist_system_prompt | llm | StrOutputParser()
+
+    messages = state["messages"]        # 상태에서 메시지를 가져옴
+    outline = get_outline(current_path) # 저장된 목차를 가져옴
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": outline, 
+        "references": state.get("references", {"queries": [], "docs": []})
+    }
+
+    # 목차 작성
+    gathered = ''
+    for chunk in content_strategist_chain.stream(inputs):
+        gathered += chunk
+        print(chunk, end='')
+
+    print()
+
+    save_outline(current_path, gathered) # 목차 저장
+
+    # 메시지 추가    
+    content_strategist_message = f"[Content Strategist] 목차 작성 완료"
+    print(content_strategist_message)
+    messages.append(AIMessage(content_strategist_message))
+
+    task_history = state.get("task_history", []) # task_history 가져오기
+    # 최근 task 작업완료(done) 처리하기
+    if task_history[-1].agent != "content_strategist": 
+        raise ValueError(f"Content Strategist가 아닌 agent가 목차 작성을 시도하고 있습니다.\n {task_history[-1]}")
+    
+    task_history[-1].done = True
+    task_history[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 다음 작업이 communicator로 사용자와 대화하는 것이므로 새 작업 추가 
+    new_task = Task(
+        agent="communicator",
+        done=False,
+        description="AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다",
+        done_at=""
+    )
+    task_history.append(new_task)
+
+    print(new_task)
+
+    # 현재 state를 업데이트한다. 
+    return {
+        "messages": messages,
+        "task_history": task_history
+    }
+
+def web_search_agent(state: State): #① (0)
+    print("\n\n============ WEB SEARCH AGENT ============")
+
+    # 작업 리스트 가져와서 web search agent 가 할 일인지 확인하기
+    tasks = state.get("task_history", [])
+    task = tasks[-1]
+
+    if task.agent != "web_search_agent":
+        raise ValueError(f"Web Search Agent가 아닌 agent가 Web Search Agent를 시도하고 있습니다.\n {task}")
+    
+    #③ 시스템 프롬프트 정의
+    web_search_system_prompt = PromptTemplate.from_template(
+        """
+        너는 다른 AI Agent 들이 수행한 작업을 바탕으로, 
+        목차(outline) 작성에 필요한 정보를 웹 검색을 통해 찾아내는 Web Search Agent이다.
+
+        현재 부족한 정보를 검색하고, 복합적인 질문은 나눠서 검색하라.
+
+        - 검색 목적: {mission}
+        --------------------------------
+        - 과거 검색 내용: {references}
+        --------------------------------
+        - 이전 대화 내용: {messages}
+        --------------------------------
+        - 목차(outline): {outline}
+        --------------------------------
+        - 현재 시각 : {current_time}
+        """
+    )
+    
+    #④ 기존 대화 내용 가져오기
+    messages = state.get("messages", [])
+
+    #⑤ 인풋 자료 준비하기
+    inputs = {
+        "mission": task.description,
+        "references": state.get("references", {"queries": [], "docs": []}),
+        "messages": messages,
+        "outline": get_outline(current_path),
+        "current_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    #⑥ LLM과 웹 검색 모델 연결
+    llm_with_web_search = llm.bind_tools([web_search])
+
+    #⑦ 시스템 프롬프트와 모델을 연결
+    web_search_chain = web_search_system_prompt | llm_with_web_search
+
+    #⑧ 웹 검색 tool_calls 가져오기
+    search_plans = web_search_chain.invoke(inputs)
+
+    #⑨ 어떤 내용을 검색했는지 담아두기
+    queries = []
+
+    #⑩ 검색 계획(tool_calls)에 따라 검색하기
+    for tool_call in search_plans.tool_calls:
+        print('-------- web search --------', tool_call)
+        args = tool_call["args"]
+        
+        queries.append(args["query"])
+
+        # (10)  검색 결과를 chroma에 추가
+        _, json_path = web_search.invoke(args)
+        print('json_path:', json_path)
+
+        # (10)  JSON 파일을 chroma에 추가
+        add_web_pages_json_to_chroma(json_path)
+
+    #⑪ (11) task 완료
+    tasks[-1].done = True
+    tasks[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    #⑪ (11) 새로운 task 추가
+    task_desc = "AI팀이 쓸 책의 세부 목차를 결정하기 위한 정보를 벡터 검색을 통해 찾아낸다."
+    task_desc += f" 다음 항목이 새로 추가되었다\n: {queries}"
+    
+    new_task = Task(
+        agent="vector_search_agent",
+        done=False,
+        description=task_desc,
+        done_at=""
+    )
+
+    tasks.append(new_task)
+
+    #⑫ (12) 작업 후기 메시지
+    msg_str = f"[WEB SEARCH AGENT] 다음 질문에 대한 검색 완료: {queries}"
+    messages.append(AIMessage(msg_str))
+
+    #⑬ (13) state 업데이트
+    return {
+        "messages": messages,
+        "task_history": tasks
+    }
+
+# 사용자와 대화할 노드(agent): communicator
+def communicator(state: State):
+    print("\n\n============ COMMUNICATOR ============")
+
+    # 시스템 프롬프트 정의
+    communicator_system_prompt = PromptTemplate.from_template(
+        """
+        너는 책을 쓰는 AI팀의 커뮤니케이터로서, 
+        AI팀의 진행상황을 사용자에게 보고하고, 사용자의 의견을 파악하기 위한 대화를 나눈다. 
+
+        사용자도 outline(목차)을 이미 보고 있으므로, 다시 출력할 필요는 없다.
+        outline: {outline} 
+        --------------------------------
+        messages: {messages}
+        """
+    )
+
+    #② 시스템 프롬프트와 모델을 연결
+    system_chain = communicator_system_prompt | llm
+
+    # 상태에서 메시지를 가져옴
+    messages = state["messages"]
+
+    # 입력값 정의
+    inputs = {
+        "messages": messages,
+        "outline": get_outline(current_path)
+    }
+
+    # 스트림되는 메시지를 출력하면서, gathered에 모으기
+    gathered = None
+
+    print('\nAI\t: ', end='')
+    for chunk in system_chain.stream(inputs):
+        print(chunk.content, end='')
+
+        if gathered is None:
+            gathered = chunk
+        else:
+            gathered += chunk
+
+    messages.append(gathered)
+
+    task_history = state.get("task_history", []) 
+    if task_history[-1].agent != "communicator":
+        raise ValueError(f"Communicator가 아닌 agent가 대화를 시도하고 있습니다.\n {task_history[-1]}")
+    
+    task_history[-1].done = True
+    task_history[-1].done_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    return {
+        "messages": messages,
+        "task_history": task_history
+    }
+
+# 상태 그래프 정의
+graph_builder = StateGraph(State)
+
+# Nodes
+graph_builder.add_node("supervisor", supervisor)     
+graph_builder.add_node("communicator", communicator)
+graph_builder.add_node("content_strategist", content_strategist)
+graph_builder.add_node("vector_search_agent", vector_search_agent)
+graph_builder.add_node("web_search_agent", web_search_agent)
+
+# Edges
+graph_builder.add_edge(START, "supervisor")
+graph_builder.add_conditional_edges(
+    "supervisor", 
+    supervisor_router,
+    {
+        "content_strategist": "content_strategist",
+        "communicator": "communicator",
+        "vector_search_agent": "vector_search_agent", 
+        "web_search_agent": "web_search_agent"
+    }
+)
+graph_builder.add_edge("content_strategist", "communicator")
+graph_builder.add_edge("web_search_agent", "vector_search_agent") #③
+graph_builder.add_edge("vector_search_agent", "communicator")
+graph_builder.add_edge("communicator", END)
+
+graph = graph_builder.compile()
+
+graph.get_graph().draw_mermaid_png(output_file_path=absolute_path.replace('.py', '.png'))
+
+# 상태 초기화
+state = State(
+    messages = [
+        SystemMessage(
+                f"""
+            너희 AI들은 사용자의 요구에 맞는 책을 쓰는 작가팀이다.
+            사용자가 사용하는 언어로 대화하라.
+
+            현재시각은 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}이다.
+
+            """
+        )
+    ],
+    task_history=[]
+)
+
+while True:
+    user_input = input("\nUser\t: ").strip()
+
+    if user_input.lower() in ['exit', 'quit', 'q']:
+        print("Goodbye!")
+        break
+    
+    state["messages"].append(HumanMessage(user_input))
+    state = graph.invoke(state)
+
+    print('\n------------------------------------ MESSAGE COUNT\t', len(state["messages"]))
+
+    save_state(current_path, state) # 현재 state 내용 저장
+
+```
