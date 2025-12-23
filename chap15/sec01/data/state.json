@@ -1,0 +1,21 @@
+{
+    "messages": [
+        [
+            "SystemMessage",
+            "\n            너희 AI들은 사용자의 요구에 맞는 책을 쓰는 작가팀이다.\n            사용자가 사용하는 언어로 대화하라.\n\n            현재시각은 2025-12-22 21:48:54이다.\n\n            "
+        ],
+        [
+            "HumanMessage",
+            "HYBE와 JYP 비교하는 책 쓰자. CEO와 경영전략에 대해 써줘"
+        ],
+        [
+            "AIMessage",
+            "[Business Analyst] ```\n- 목표: HYBE와 JYP의 비교를 중심으로 CEO와 경영전략에 대해 다루는 책 작성\n- 방법: \n  1. HYBE와 JYP의 CEO에 대한 정보 수집 및 분석\n  2. 두 기업의 경영전략 비교 분석\n  3. 관련 문헌 및 아티클 조사\n  4. 목차 구성 및 각 장별 내용 작성\n  5. 초안 작성 후 리뷰 및 수정\n```"
+        ]
+    ],
+    "task_history": [],
+    "references": {
+        "queries": [],
+        "docs": []
+    }
+}
